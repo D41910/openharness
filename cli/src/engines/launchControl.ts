@@ -1,7 +1,7 @@
 /** Eager native launch control. Importing it neither probes a binary nor reads or writes a store. */
 import { opencodeBinAsync } from '../lib/engineBin.js'
 import { OPENCODE_SESSION_MODEL, OPENCODE_VERSION } from './opencode/contract.js'
-import { majorVersion, nativeVersionProbe, parseMajor, type VersionProbe } from './kit/nativeVersion.js'
+import { executableSnapshot, majorVersion, nativeVersionProbe, parseMajor, type NativeExecutableSnapshot, type VersionProbe } from './kit/nativeVersion.js'
 import { createSessionModelControl, type NativeApiRun, type NativeModelResult, type NativeSessionModel, type NativeModelAuthority } from './kit/nativeSessionModel.js'
 export { isOpencodeV2 } from './opencode/contract.js'
 
@@ -14,6 +14,16 @@ export async function opencodeMajorVersion(probe?: VersionProbe, memo = versionM
     probe = nativeVersionProbe(OPENCODE_VERSION, () => binary)
   }
   return majorVersion(OPENCODE_VERSION, probe, memo)
+}
+
+export interface OpencodeLaunchSnapshot extends NativeExecutableSnapshot { major: number }
+export async function opencodeLaunchSnapshot(binary?: string): Promise<OpencodeLaunchSnapshot | null> {
+  const command = binary ?? await opencodeBinAsync()
+  const probe = nativeVersionProbe(OPENCODE_VERSION, () => command)
+  const executable = executableSnapshot(probe)
+  if (!executable) return null
+  const major = await majorVersion(OPENCODE_VERSION, probe, versionMemo)
+  return major !== null && executable.current() ? { ...executable, major } : null
 }
 
 export type OpencodeSessionModel = NativeSessionModel

@@ -14,10 +14,6 @@ export const hooks: HookContract = {
     events: [{ event: 'SessionStart', matcher: 'startup|resume|clear|compact' }, { event: 'UserPromptSubmit' }],
     timeout: 5,
     commandNamesHome: true,
-    // A malformed existing file is left untouched: silently replacing it could disable user
-    // security/automation hooks.
-    unreadable: 'keep',
-    write: 'atomic',
     upToDate: { command: 'first', matcher: true },
     messages: {
       current: '[hooks] Codex SessionStart/UserPromptSubmit hooks already installed → {file}',

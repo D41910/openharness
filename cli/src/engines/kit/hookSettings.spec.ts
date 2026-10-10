@@ -21,23 +21,23 @@ it('finds an engine\'s home in the person\'s home or in a daemon setting', () =>
   expect(defaultHookHome(codex.settings)).toBe(env.CODEX_HOME)
 })
 
-it('names a home literally in its log lines, whatever characters the path holds', () => {
+it('names a home literally in its log lines, whatever characters the path holds', async () => {
   const log = vi.spyOn(console, 'log').mockImplementation(() => {})
   // `$&` and `$1` mean something to String.replace with a string replacement, and {port} to the templates.
   const home = join(root, 'a$&b$1{port}{file}')
   const file = join(home, 'settings.json')
-  installHookSettings('claude', { ...claude.settings, messages: { ...claude.settings.messages, installed: '{file}|{script}|{port}' } }, 19473, home)
+  await installHookSettings('claude', { ...claude.settings, messages: { ...claude.settings.messages, installed: '{file}|{script}|{port}' } }, 19473, home)
   expect(log.mock.calls[0]).toEqual([`${file}|${HOOK_SCRIPT}|19473`])
   expect(JSON.parse(readFileSync(file, 'utf8')).hooks.Stop[0].hooks[0].command).toContain('--port 19473')
 })
 
-it('keeps a malformed file quietly for an engine that declares no lines for it', () => {
+it('reports a held malformed file even when an engine declares no malformed-file lines', async () => {
   const error = vi.spyOn(console, 'error').mockImplementation(() => {})
   const home = join(root, 'codex')
   mkdirSync(home)
   writeFileSync(join(home, 'hooks.json'), '{not-json')
   const { malformed: _, ...messages } = codex.settings.messages
-  installHookSettings('codex', { ...codex.settings, messages }, 19473, home)
-  expect(error).not.toHaveBeenCalled()
+  expect(await installHookSettings('codex', { ...codex.settings, messages }, 19473, home)).toBe(false)
+  expect(error).toHaveBeenCalledWith(codex.settings.messages.failed, expect.any(SyntaxError))
   expect(readFileSync(join(home, 'hooks.json'), 'utf8')).toBe('{not-json')
 })

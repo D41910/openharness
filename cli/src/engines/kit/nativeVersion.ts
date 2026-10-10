@@ -6,13 +6,25 @@ import { resolveBinaryOnPath } from '../../lib/binaryOnPath.js'
 
 export interface VersionRule { output: RegExp; args: readonly string[]; timeoutMs: number }
 export interface VersionProbe { identity(): string | null; read(): string | Promise<string> }
+export interface NativeVersionProbe extends VersionProbe { command(): string | null }
+export interface NativeExecutableSnapshot {
+  command: string
+  identity: string
+  current(): boolean
+}
+
+/** Retain the file used by the probe through later preparation and dispatch. */
+export function executableSnapshot(probe: NativeVersionProbe): NativeExecutableSnapshot | null {
+  const command = probe.command(), identity = probe.identity()
+  return command && identity ? { command, identity, current: () => probe.identity() === identity } : null
+}
 
 export function parseMajor(rule: VersionRule, output: string): number | null {
   const match = rule.output.exec(output)
   return match ? Number(match[1]) : null
 }
 
-export function nativeVersionProbe(rule: VersionRule, binary: () => string): VersionProbe {
+export function nativeVersionProbe(rule: VersionRule, binary: () => string): NativeVersionProbe {
   // One attempt resolves one command. Previously identity() and read() resolved
   // independently, so a PATH/config change could cache B's answer under A's key.
   let selected: string | null | undefined
@@ -24,13 +36,14 @@ export function nativeVersionProbe(rule: VersionRule, binary: () => string): Ver
     return selected
   }
   return {
+    command: path,
     identity: () => {
       const file = path()
       if (!file) return null
       try {
-        const target = realpathSync(file), info = statSync(file)
+        const target = realpathSync(file), info = statSync(file, { bigint: true })
         if (!info.isFile()) return null
-        return `${file}:${target}:${info.dev}:${info.ino}:${info.mode}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`
+        return `${file}:${target}:${info.dev}:${info.ino}:${info.mode}:${info.size}:${info.mtimeNs}:${info.ctimeNs}`
       } catch { return null }
     },
     read: () => new Promise<string>((done, failed) => {
@@ -44,11 +57,13 @@ export function nativeVersionProbe(rule: VersionRule, binary: () => string): Ver
   }
 }
 
-/** Compatibility behavior: one answer per installed file; absent files have no cache key. */
+/** Only confirmed observations survive an attempt. A timeout says nothing about
+ * the installed version and must not poison later launches of the same file. */
 const publishing = new WeakMap<Map<string, number | null>, Map<string, object>>()
 export async function majorVersion(rule: VersionRule, probe: VersionProbe, memo: Map<string, number | null>): Promise<number | null> {
   const identity = probe.identity()
-  if (identity !== null && memo.has(identity)) return memo.get(identity) ?? null
+  const known = identity !== null ? memo.get(identity) : null
+  if (typeof known === 'number') return known
   const attempts = publishing.get(memo) ?? new Map<string, object>()
   publishing.set(memo, attempts)
   const ticket = {}
@@ -63,7 +78,7 @@ export async function majorVersion(rule: VersionRule, probe: VersionProbe, memo:
     // file. The synchronous implementation could never overlap in this way.
     if (attempts.get(identity) !== ticket) return current ? major : null
     attempts.delete(identity)
-    if (current) memo.set(identity, major)
+    if (current && major !== null) memo.set(identity, major)
   }
   if (!current) return null
   return major

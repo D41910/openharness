@@ -2,18 +2,16 @@
  * The one installer of the engines' declared hook settings (facets/hooks.ts `HookSettings`): Harness's block
  * merged into the settings file an engine reads its hooks from, every other block left as it was.
  *
- * It replaces Claude Code's and Codex's own installers, statement for statement, and writes the same bytes,
- * modes and log lines in every state their files were recorded in (engines/hookInstallers.golden.spec.ts).
- * It runs in core, synchronously: at daemon start (core/engines/hooks.ts) and before a Codex agent starts in
- * a profile of its own (core/agents/create.ts), where a hook installed late is a hook that never fires.
+ * It runs eagerly before launch. Unknown files are held, foreign commands are
+ * preserved, and hook and approval destinations are inspected before publication.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { env } from '../../config/env.js'
 import type { HookSettings } from '../facets/hooks.js'
-import { recordReviewed } from './hookReview.js'
-import { command, HOOK_SCRIPT, isOurs, writeJsonAtomic, type Settings } from './notifyHooks.js'
+import { prepareReviewed } from './hookReview.js'
+import { command, HOOK_SCRIPT, isOurs, foreignHookBlocks, type Settings } from './notifyHooks.js'
+import { HookPreparationHeld, inspectHookFile, runHookPreparation, type HookPreparationOptions } from './nativeHookFiles.js'
 
 /** The engines whose hooks run the notify.mjs command. */
 export type HookEngine = Parameters<typeof command>[1]
@@ -23,70 +21,64 @@ export function defaultHookHome(settings: HookSettings): string {
   return 'setting' in settings.home ? env[settings.home.setting] : join(homedir(), settings.home.inHome)
 }
 
-export function installHookSettings(engine: HookEngine, settings: HookSettings, port: number, home: string = defaultHookHome(settings)): void {
+export async function installHookSettings(engine: HookEngine, settings: HookSettings, port: number, home: string = defaultHookHome(settings), options: HookPreparationOptions = {}): Promise<boolean> {
   const file = join(home, settings.file)
   const say = (line: string): string => line.replace(/\{(file|script|port)\}/g, (_, name: string) =>
     name === 'file' ? file : name === 'script' ? HOOK_SCRIPT : String(port))
   const { messages } = settings
-  let current: Settings = {}
-  if (settings.unreadable === 'replace') {
-    try {
-      current = JSON.parse(readFileSync(file, 'utf-8')) as Settings
-    } catch {
-      // missing / unreadable → start from empty settings
+  try { return await runHookPreparation([file, ...(settings.reviewed ? [join(home, settings.reviewed.file)] : [])], async attempt => {
+    const observed = inspectHookFile(file)
+    const current = (observed.content === null ? {} : JSON.parse(observed.content)) as Settings
+    if (!current || typeof current !== 'object' || Array.isArray(current)
+      || (current.hooks !== undefined && (!current.hooks || typeof current.hooks !== 'object' || Array.isArray(current.hooks)))) {
+      throw new HookPreparationHeld('the hook settings do not have the declared object shape')
     }
-  } else if (existsSync(file)) {
-    try {
-      current = JSON.parse(readFileSync(file, 'utf-8')) as Settings
-    } catch {
-      for (const line of messages.malformed ?? []) console.error(say(line))
-      return
+    current.hooks ??= {}
+    const cmd = command(port, engine, settings.commandNamesHome ? home : undefined)
+    let changed = false
+    let updated = false // true when an EXISTING block's command changed (path/port drift)
+
+    for (const { event, matcher } of settings.events) {
+      if (current.hooks[event] !== undefined && !Array.isArray(current.hooks[event])) throw new HookPreparationHeld('a hook event is not a list')
+      const blocks = current.hooks[event] ?? []
+      // Collapse any duplicate "ours" blocks (e.g. from an earlier path) down to a single one, and keep every
+      // non-ours block untouched.
+      const foreign = foreignHookBlocks(blocks)
+      const ours = blocks.filter(isOurs)
+      if (ours.length !== 1) changed = true // none yet, or duplicates to drop
+      const existing = ours[0]
+      if (existing) {
+        // A prior block with a different command (moved checkout / dev↔dist / changed port / interpreter) is
+        // overwritten in place by the canonical one below.
+        const existingCmd = settings.upToDate.command === 'first-ours'
+          ? existing.hooks?.find((h) => isOurs({ hooks: [h] }))?.command
+          : existing.hooks?.[0]?.command
+        if (existingCmd !== cmd) { changed = true; updated = true }
+        if (settings.upToDate.matcher && existing.matcher !== matcher) changed = true
+      }
+      current.hooks[event] = [...foreign, { ...(matcher ? { matcher } : {}), hooks: [{ type: 'command', command: cmd, timeout: settings.timeout }] }]
     }
-  }
 
-  if (!current.hooks || typeof current.hooks !== 'object') current.hooks = {}
-  const cmd = command(port, engine, settings.commandNamesHome ? home : undefined)
-  let changed = false
-  let updated = false // true when an EXISTING block's command changed (path/port drift)
-
-  for (const { event, matcher } of settings.events) {
-    const blocks = Array.isArray(current.hooks[event]) ? current.hooks[event] : []
-    // Collapse any duplicate "ours" blocks (e.g. from an earlier path) down to a single one, and keep every
-    // non-ours block untouched.
-    const foreign = blocks.filter((b) => !isOurs(b))
-    const ours = blocks.filter(isOurs)
-    if (ours.length !== 1) changed = true // none yet, or duplicates to drop
-    const existing = ours[0]
-    if (existing) {
-      // A prior block with a different command (moved checkout / dev↔dist / changed port / interpreter) is
-      // overwritten in place by the canonical one below.
-      const existingCmd = settings.upToDate.command === 'first-ours'
-        ? existing.hooks?.find((h) => isOurs({ hooks: [h] }))?.command
-        : existing.hooks?.[0]?.command
-      if (existingCmd !== cmd) { changed = true; updated = true }
-      if (settings.upToDate.matcher && existing.matcher !== matcher) changed = true
+    const next = changed ? JSON.stringify(current, null, 2) + '\n' : observed.content!
+    const reviewed = settings.reviewed ? prepareReviewed(settings.reviewed, home, file, JSON.parse(next) as Settings) : null
+    reviewed?.verify()
+    if (!changed) {
+      const published = await observed.replace(next, attempt)
+      console.log(say(messages.current))
+      // Installed by an earlier start, or by a release before the engine asked: recorded now, as the file has it.
+      const approval = await reviewed?.commit(attempt)
+      published.verify(); approval?.verify()
+      return true
     }
-    current.hooks[event] = [...foreign, { ...(matcher ? { matcher } : {}), hooks: [{ type: 'command', command: cmd, timeout: settings.timeout }] }]
-  }
 
-  if (!changed) {
-    console.log(say(messages.current))
-    // Installed by an earlier start, or by a release before the engine asked: recorded now, as the file has it.
-    if (settings.reviewed) recordReviewed(settings.reviewed, home, file)
-    return
-  }
-
-  try {
-    if (settings.write === 'atomic') writeJsonAtomic(file, current)
-    else {
-      mkdirSync(dirname(file), { recursive: true })
-      writeFileSync(file, JSON.stringify(current, null, 2) + '\n')
-    }
+    const published = await observed.replace(next, attempt)
     console.log(say(updated && messages.updated ? messages.updated : messages.installed))
     console.log(say(messages.after))
-  } catch (err) {
+    const approval = await reviewed?.commit(attempt)
+    published.verify(); approval?.verify()
+    return true
+  }, { identity: JSON.stringify([engine, settings, port, home]), ...options }) } catch (err) {
     console.error(say(messages.failed), err)
-    return
+    return false
   }
-  if (settings.reviewed) recordReviewed(settings.reviewed, home, file)
 }

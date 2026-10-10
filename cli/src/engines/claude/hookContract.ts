@@ -19,8 +19,6 @@ export const hooks: HookContract = {
     events: [{ event: 'SessionStart' }, { event: 'SessionEnd' }, { event: 'UserPromptSubmit' }, { event: 'Stop' }, { event: 'StopFailure' }],
     timeout: 5,
     commandNamesHome: false,
-    unreadable: 'replace',
-    write: 'in-place',
     upToDate: { command: 'first-ours', matcher: false },
     messages: {
       current: '[hooks] Claude session + turn (Stop/StopFailure) hooks already installed',

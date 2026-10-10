@@ -1,9 +1,10 @@
 /** The notify.mjs command and JSON merge primitives shared by shell-hook engines. */
-import { existsSync, mkdirSync, writeFileSync, renameSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { existsSync } from 'node:fs'
+import { basename, dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { env } from '../../config/env.js'
 import { managedNodePath } from '../../lib/nodeRuntime.js'
+import { HookPreparationHeld } from './nativeHookFiles.js'
 import { cursorDataDir } from '../cursor/contract.js'
 
 // notify.mjs location depends on the layout (import.meta.url is the REAL executing file at runtime):
@@ -65,14 +66,61 @@ export function command(
   ].join(' ')
 }
 
-/** True if a block already points at our notify.mjs script (any path — robust across layout/version). */
-export function isOurs(block: HookBlock): boolean {
-  return Array.isArray(block?.hooks) && block.hooks.some((h) => h?.command?.includes('notify.mjs'))
+/** Accept only a literal Node invocation with Harness's protocol arguments.
+ * A foreign script sharing the notify.mjs basename is not ours to remove. */
+export function isManagedHookCommand(value: unknown): boolean {
+  if (typeof value !== 'string' || value.length > 64 * 1024) return false
+  const args: string[] = []
+  let word = '', active = false, quote = ''
+  for (let index = 0; index < value.length; index++) {
+    const char = value[index]
+    if (quote) {
+      if (char === quote) { quote = ''; continue }
+      if (quote === '"' && /[$`\\]/.test(char)) return false
+      word += char; continue
+    }
+    if (char === "'" || char === '"') { quote = char; active = true; continue }
+    if (char === '\\') {
+      if (++index === value.length) return false
+      word += value[index]; active = true; continue
+    }
+    if (/\s/.test(char)) { if (active) { args.push(word); word = ''; active = false }; continue }
+    if (/[;&|<>$`()]/.test(char)) return false
+    word += char; active = true
+  }
+  if (quote) return false
+  if (active) args.push(word)
+  if (!/^(?:node|nodejs)(?:\.exe)?$/.test(basename(args[0] ?? '')) || !isAbsolute(args[1] ?? '') || basename(args[1] ?? '') !== 'notify.mjs') return false
+  // The original positional protocol was installed only under Harness's own
+  // CLI directory. Later commands identify the data root explicitly.
+  if (args.length === 4 && /\/\.harness\/cli\/(?:hook\/)?notify\.mjs$/.test(args[1])
+    && /^\d+$/.test(args[2]) && /^(?:claude|codex)$/.test(args[3])) return true
+  const flags = new Map<string, string>()
+  for (let index = 2; index < args.length; index += 2) {
+    const key = args[index], value = args[index + 1]
+    if (!/^--(?:port|data-dir|claude-projects-dir|(?:codex|grok|cursor|hermes|commandcode|devin|agy|copilot)-home|engine|event|agy-event|copilot-event)$/.test(key)
+      || value === undefined || flags.has(key)) return false
+    flags.set(key, value)
+  }
+  return /^\d+$/.test(flags.get('--port') ?? '') && isAbsolute(flags.get('--data-dir') ?? '')
 }
 
-export function writeJsonAtomic(file: string, value: unknown): void {
-  mkdirSync(dirname(file), { recursive: true })
-  const tmp = `${file}.${process.pid}.tmp`
-  writeFileSync(tmp, JSON.stringify(value, null, 2) + '\n')
-  renameSync(tmp, file)
+export function isOurs(block: HookBlock): boolean {
+  return Array.isArray(block?.hooks) && block.hooks.some(hook => isManagedHookCommand(hook?.command))
+}
+
+/** A managed command can share a block with somebody else's command. Updating
+ * ours must keep those siblings and the block's matcher and other fields. */
+export function foreignHookBlocks(blocks: HookBlock[]): HookBlock[] {
+  for (const block of blocks) {
+    if (!block || typeof block !== 'object' || !Array.isArray(block.hooks) || block.hooks.some(hook =>
+      !hook || typeof hook !== 'object' || (hook.command !== undefined && typeof hook.command !== 'string'))) {
+      throw new HookPreparationHeld('a hook block has an unconfirmed shape')
+    }
+  }
+  return blocks.flatMap(block => {
+    if (!isOurs(block)) return [block]
+    const hooks = block.hooks.filter(hook => !isOurs({ hooks: [hook] }))
+    return hooks.length ? [{ ...block, hooks }] : []
+  })
 }

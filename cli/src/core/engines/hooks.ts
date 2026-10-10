@@ -10,6 +10,7 @@ import { chooseHookAgent, type HookServerHandlers } from '../../hookServer.js'
 import { confirmHomes, recoverEngineHomes } from '../../lib/engineHomes.js'
 import { createHomeAdoptions } from './homeAdoptions.js'
 import * as nativeHooks from '../../engines/nativeHooks.js'
+import type { OpencodeLaunchSnapshot } from '../../engines/launchControl.js'
 import { sid } from '../../lib/log.js'
 import type { registry, RegisteredSession } from '../../lib/registry.js'
 import { processRows } from '../../lib/terminalAgentDiscovery.js'
@@ -210,8 +211,8 @@ export function createEngineHooks({ tmuxBackend, agentReconciler, registry, pane
  * from 1.x to 2.x under a running daemon, and its new TUI must not find the old server plugin. Installation
  * never depends on loading its optional interpreter.
  */
-export async function installOpencodePluginBeforeSpawn(port: number): Promise<boolean> {
-  return await nativeHooks.installOpencodePlugin(port) !== false
+export async function installOpencodePluginBeforeSpawn(port: number, snapshot?: OpencodeLaunchSnapshot): Promise<boolean> {
+  return await (snapshot ? nativeHooks.installOpencodePlugin(port, snapshot) : nativeHooks.installOpencodePlugin(port)) !== false
 }
 
 export interface InstallEngineHooksOptions {
@@ -226,7 +227,7 @@ export interface InstallEngineHooksOptions {
 /**
  * The other engines' declarations are installed in their original order, without an optional import.
  */
-const OTHER_INSTALLERS: Array<[string, (port: number) => void | Promise<unknown>]> = [
+const OTHER_INSTALLERS: Array<[string, (port: number) => void | boolean | Promise<unknown>]> = [
   ['cursor', nativeHooks.installCursorHooks],
   ['opencode', nativeHooks.installOpencodePlugin],
   ['kilo', nativeHooks.installKiloPlugin],
@@ -255,14 +256,17 @@ const OTHER_INSTALLERS: Array<[string, (port: number) => void | Promise<unknown>
  */
 export async function installEngineHooks(port: number, options: InstallEngineHooksOptions = {}): Promise<{ close(): void }> {
   const pending: Promise<void>[] = []
-  const hookStep = (vendor: string, install: () => void | Promise<unknown>): void => {
+  const hookStep = (vendor: string, install: () => void | boolean | Promise<unknown>): void => {
     if (options.only && !options.only.has(vendor)) return
     const failed = (error: unknown) => {
       console.warn(`[hooks] ${vendor} install skipped · ${error instanceof Error ? error.message : error}`)
     }
     try {
       const result = install()
-      if (result) pending.push(result.then(() => {}, failed))
+      if (result === false) failed('native hook preparation is unavailable')
+      else if (result && typeof result !== 'boolean') pending.push(result.then(answer => {
+        if (answer === false) failed('native hook preparation is unavailable')
+      }, failed))
     } catch (error) { failed(error) }
   }
   // The homes the person moved (lib/engineHomes.ts, by each engine's declared session store) get the hooks
@@ -272,9 +276,9 @@ export async function installEngineHooks(port: number, options: InstallEngineHoo
   const adoptions = createHomeAdoptions({
     read: recoverEngineHomes,
     confirm: confirmHomes,
-    install: (engine, home) => {
+    install: async (engine, home) => {
       if (options.only && !options.only.has(engine)) return
-      engineHooks[engine].installIn(port, home)
+      if (!await engineHooks[engine].installIn(port, home, { current: adoptions.current })) throw new Error(`${sessionStoreContracts[engine].product} hook preparation is unavailable`)
       console.log(`[hooks] ${sessionStoreContracts[engine].product} hooks installed in its adopted home`)
     },
     held: reason => {
