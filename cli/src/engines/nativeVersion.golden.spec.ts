@@ -1,4 +1,4 @@
-/** Healthy native version and hook selection, recorded before the probe becomes asynchronous. */
+/** Healthy native version and hook selection, including an upgrade, downgrade and repeated preparation. */
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, existsSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -60,11 +60,11 @@ it.each(['linux', 'darwin'])('preserves versioned native hook selection on %s', 
     const files = () => [OPENCODE_LEGACY_PLUGIN.file, OPENCODE_TUI_PLUGIN.file].map(file => ({
       file, source: existsSync(file) ? readFileSync(file, 'utf8').split(VERSION).join('<version>') : null,
     }))
-    for (const major of [1, 2]) {
-      native.major = major; native.stamp = major; native.calls.length = 0
+    for (const [name, major, stamp] of [['v1', 1, 1], ['v2', 2, 2], ['downgrade-v1', 1, 3], ['current-v1', 1, 3]] as const) {
+      native.major = major; native.stamp = stamp; native.calls.length = 0
       const installed = await installOpencodePluginBeforeSpawn(4242)
       const first = await opencodeMajorVersion(), repeat = await opencodeMajorVersion()
-      const key = `${platform}:v${major}`
+      const key = `${platform}:${name}`
       observations[key] = JSON.parse(JSON.stringify({ installed, first, repeat, calls: native.calls, files: files() }).split(root).join('<root>'))
       if (!record) expect({ key, value: observations[key] }).toEqual({ key, value: expected[key] })
     }
