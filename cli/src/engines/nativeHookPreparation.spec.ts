@@ -3,12 +3,12 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 
-const probe = vi.hoisted(() => ({ major: 1 as number | null, failSync: false, failRemove: false }))
+const probe = vi.hoisted(() => ({ major: 1 as number | null, failSync: false, failRemove: false, beforeSync: undefined as (() => Promise<void>) | undefined }))
 vi.mock('./launchControl.js', () => ({ opencodeMajorVersion: async () => probe.major }))
 vi.mock('node:fs', async original => {
   const fs = await original<typeof import('node:fs')>()
   return { ...fs,
-    fsync: (fd: number, callback: (error: Error | null) => void) => { if (probe.failSync) queueMicrotask(() => callback(new Error('fixture sync failure'))); else fs.fsync(fd, callback) },
+    fsync: (fd: number, callback: (error: Error | null) => void) => { if (probe.failSync) queueMicrotask(() => callback(new Error('fixture sync failure'))); else if (probe.beforeSync) void probe.beforeSync().then(() => fs.fsync(fd, callback)); else fs.fsync(fd, callback) },
     unlinkSync: (file: string) => {
       if (probe.failRemove && file.endsWith('/plugin/launcher-register.js')) throw new Error('fixture removal failure')
       return fs.unlinkSync(file)
@@ -17,7 +17,7 @@ vi.mock('node:fs', async original => {
 })
 const roots: string[] = []
 afterEach(() => {
-  probe.major = 1; probe.failSync = false; probe.failRemove = false
+  probe.major = 1; probe.failSync = false; probe.failRemove = false; probe.beforeSync = undefined
   vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.resetModules()
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
@@ -243,4 +243,43 @@ it('holds a large YAML structure before parsing or modifying it', async () => {
   writeFileSync(file, config)
   expect(await installHermesHooks(4242, home)).toBe(false)
   expect(readFileSync(file, 'utf8')).toBe(config)
+})
+
+
+it('installs every healthy Hermes profile beyond the asynchronous preparation pool capacity', async () => {
+  const { root } = await fixture()
+  const home = join(root, 'HERMES_HOME')
+  writeFileSync(join(home, 'config.yaml'), 'model: fixture\n')
+  for (let n = 0; n < 18; n++) {
+    const profile = join(home, 'profiles', String(n)); mkdirSync(profile, { recursive: true })
+    writeFileSync(join(profile, 'config.yaml'), 'model: fixture\n')
+  }
+  const { installHermesHooks } = await import('./nativeHooks.js')
+  expect(await installHermesHooks(4242)).toBe(true)
+  for (let n = 0; n < 18; n++) expect(readFileSync(join(home, 'profiles', String(n), 'config.yaml'), 'utf8')).toContain('--port 4242')
+}, 20_000)
+
+
+it('does not join hook preparation across a managed Node command change', async () => {
+  const { root } = await fixture()
+  const runtime = await import('../lib/nodeRuntime.js')
+  const node = vi.spyOn(runtime, 'managedNodePath').mockReturnValue('/fixture/node-before')
+  const { engineHooks } = await import('./hooks.js')
+  const home = join(root, 'HOME'), file = join(home, 'settings.json')
+  writeFileSync(file, '{}\n')
+  let release!: () => void, started!: () => void
+  const blocked = new Promise<void>(resolve => { release = resolve })
+  const syncing = new Promise<void>(resolve => { started = resolve })
+  probe.beforeSync = () => { started(); return blocked }
+  const first = engineHooks.claude.installIn(4242, home)
+  await syncing
+  node.mockReturnValue('/fixture/node-after')
+  expect(await engineHooks.claude.installIn(4242, home)).toBe(false)
+  release()
+  expect(await first).toBe(false)
+  expect(readFileSync(file, 'utf8')).toBe('{}\n')
+  probe.beforeSync = undefined
+  expect(await engineHooks.claude.installIn(4242, home)).toBe(true)
+  expect(readFileSync(file, 'utf8')).toContain('/fixture/node-after')
+  expect(readFileSync(file, 'utf8')).not.toContain('/fixture/node-before')
 })

@@ -29,11 +29,11 @@ function entries(value: unknown): Entry[] {
 }
 
 export async function installNativeHookSettings(rule: NativeHookSettings, port: number, options: HookPreparationOptions = {}): Promise<boolean> {
+  const cmd = command(port, rule.engine)
   try { return await runHookPreparation([rule.file], async attempt => {
     const observed = inspectHookFile(rule.file)
     const parsed: unknown = observed.content === null ? {} : JSON.parse(observed.content)
     if (!object(parsed)) throw new HookPreparationHeld('the settings do not have the declared object shape')
-    const cmd = command(port, rule.engine)
     let changed = false
     if (rule.schema === 'named') {
       const prior = parsed[rule.block!]
@@ -76,7 +76,7 @@ export async function installNativeHookSettings(rule: NativeHookSettings, port: 
     console.log(changed ? rule.messages.installed.replace('{file}', () => rule.file) : rule.messages.current)
     if (changed && rule.messages.after) console.log(rule.messages.after)
     return true
-  }, { identity: JSON.stringify([rule, port]), ...options }) } catch (error) {
+  }, { ...options, identity: JSON.stringify([rule, port, cmd]) }) } catch (error) {
     console.error(rule.messages.failed, error)
     return false
   }

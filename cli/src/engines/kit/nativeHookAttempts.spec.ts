@@ -1,4 +1,4 @@
-import { closeSync, fstatSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { closeSync, fstatSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
@@ -71,7 +71,7 @@ it('rechecks the original caller after a flush without acknowledging or publishi
   expect(readFileSync(file, 'utf8')).toBe('before')
 })
 
-it('bounds actual outstanding flushes even after every reply has timed out', async () => {
+it('bounds outstanding flushes and releases undispatched work when its deadline expires', async () => {
   const replies: Promise<unknown>[] = []
   for (let n = 0; n < 16; n++) {
     const file = join(root, String(n)); writeFileSync(file, 'before')
@@ -81,11 +81,66 @@ it('bounds actual outstanding flushes even after every reply has timed out', asy
     }, { timeoutMs: 10 }).catch(error => error))
   }
   await drain()
-  expect(disk.pending.size).toBe(16)
+  expect(disk.pending.size).toBe(2)
+  await expect(runHookPreparation([join(root, 'overflow')], async () => true)).rejects.toThrow(/slots/)
   await vi.advanceTimersByTimeAsync(10)
   await Promise.all(replies)
-  await expect(runHookPreparation([join(root, 'overflow')], async () => true)).rejects.toThrow(/slots/)
-  expect(disk.pending.size).toBe(16)
+  expect(disk.pending.size).toBe(2)
+  expect(await runHookPreparation([join(root, 'available')], async () => true)).toBe(true)
   await release()
   expect(await runHookPreparation([join(root, 'recovered')], async () => true)).toBe(true)
+})
+
+
+it('checks a changed second destination before publishing the first after a disk wait', async () => {
+  const hooks = join(root, 'hooks'), approvals = join(root, 'approvals')
+  writeFileSync(hooks, 'old hooks'); writeFileSync(approvals, 'old approvals')
+  const pending = runHookPreparation([hooks, approvals], async attempt => {
+    const first = inspectHookFile(hooks), second = inspectHookFile(approvals)
+    const published = await first.replace('new hooks', attempt)
+    await second.replace('new approvals', attempt)
+    published.verify()
+  }).catch(error => error)
+  await drain()
+  writeFileSync(approvals, 'foreign edit')
+  await release()
+  expect((await pending).message).toMatch(/changed/)
+  expect(readFileSync(hooks, 'utf8')).toBe('old hooks')
+  expect(readFileSync(approvals, 'utf8')).toBe('foreign edit')
+})
+
+it('checks each joining owner and deadline without cancelling the original installation', async () => {
+  const file = join(root, 'hooks'); writeFileSync(file, 'before')
+  const original = runHookPreparation([file], async attempt => {
+    await inspectHookFile(file).replace('ready', attempt)
+    return true
+  }, { identity: 'same' })
+  await drain()
+  const work = vi.fn(async () => true)
+  await expect(runHookPreparation([file], work, { identity: 'same', current: () => false })).rejects.toThrow(/joining owner/)
+  const short = runHookPreparation([file], work, { identity: 'same', timeoutMs: 5 }).catch(error => error)
+  let current = true
+  const cancelled = runHookPreparation([file], work, { identity: 'same', current: () => current }).catch(error => error)
+  await vi.advanceTimersByTimeAsync(5)
+  expect((await short).message).toMatch(/joining preparation.*deadline/)
+  current = false
+  await release()
+  expect(await original).toBe(true)
+  expect((await cancelled).message).toMatch(/joining owner/)
+  expect(work).not.toHaveBeenCalled()
+  expect(readFileSync(file, 'utf8')).toBe('ready')
+})
+
+
+it('keeps a queued destination bound to the route it reserved before asynchronous dispatch', async () => {
+  const first = join(root, 'first'), second = join(root, 'second'), alias = join(root, 'alias')
+  writeFileSync(first, 'first'); writeFileSync(second, 'second'); symlinkSync(first, alias)
+  const work = vi.fn(async () => true)
+  const pending = runHookPreparation([alias], work).catch(error => error)
+  unlinkSync(alias); symlinkSync(second, alias)
+  await drain()
+  expect((await pending).message).toMatch(/route changed/)
+  expect(work).not.toHaveBeenCalled()
+  expect(readFileSync(first, 'utf8')).toBe('first')
+  expect(readFileSync(second, 'utf8')).toBe('second')
 })

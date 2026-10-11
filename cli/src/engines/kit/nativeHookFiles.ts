@@ -1,7 +1,7 @@
 /** Hook preparation owns only a verified file version. Unknown contents are
  * never an empty configuration, and a completed write includes its directory. */
 import { randomUUID } from 'node:crypto'
-import { accessSync, closeSync, constants, fstatSync, fsync, lstatSync, mkdirSync, openSync, readSync, renameSync, unlinkSync, writeFileSync, type BigIntStats } from 'node:fs'
+import { accessSync, closeSync, constants, fchmodSync, fstatSync, fsync, lstatSync, mkdirSync, openSync, readSync, renameSync, unlinkSync, writeFileSync, type BigIntStats } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { NativeEvidenceBudget } from './nativeEvidence.js'
 import { NativePaths, verifyNativePathFacts } from './nativePaths.js'
@@ -46,6 +46,7 @@ function ensureDirectory(path: string, attempt: HookPreparationAttempt): void {
   } catch (error) {
     if (!missing(error)) throw error
     ensureDirectory(dirname(path), attempt)
+    attempt.verify(); attempt.check()
     try { mkdirSync(path) } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error }
   }
 }
@@ -128,7 +129,7 @@ export function inspectHookFile(file: string, defaultMode = 0o666) {
     content, directory, stamp: before,
     verify, prepare,
     async replace(next: string, attempt: HookPreparationAttempt): Promise<HookFilePublication> {
-      attempt.check(); prepare(next)
+      attempt.verify(); prepare(next)
       if (content === next) {
         // A previous rename may have succeeded before directory sync failed.
         // Equality alone cannot turn that uncertainty into a durable success.
@@ -157,15 +158,26 @@ export function inspectHookFile(file: string, defaultMode = 0o666) {
       try {
         fd = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, mode)
         stagedIdentity = fileIdentity(fstatSync(fd, { bigint: true }))
+        if (content !== null) { fchmodSync(fd, mode); stagedIdentity = fileIdentity(fstatSync(fd, { bigint: true })) }
         writeFileSync(fd, next)
+        const stagedVersion = version(fstatSync(fd, { bigint: true }))
         await attempt.flush(fd)
+        if (version(fstatSync(fd, { bigint: true })) !== stagedVersion || version(lstatSync(temporary, { bigint: true })) !== stagedVersion) {
+          throw new HookPreparationHeld('the staging file changed before publication')
+        }
         fresh.verify()
         // Retained existing ancestors/aliases must still name the original
         // route; only directories created above can replace an absent fact.
         verifyNativePathFacts(facts.filter(fact => fact.identity !== null))
-        attempt.check()
+        attempt.verify()
         renameSync(temporary, actual)
+        const committed = inspectHookFile(file)
+        if (committed.content !== next || committed.stamp !== version(fstatSync(fd, { bigint: true }))) {
+          throw new HookPreparationHeld('the published settings changed before sync')
+        }
+        attempt.observe(file, committed.verify)
         await syncDirectoryChain(parent, attempt)
+        attempt.verify()
         verifyNativePathFacts(facts.filter(fact => fact.identity !== null && fact.path !== target))
         const published = inspectHookFile(file)
         if (published.content !== next || published.stamp !== version(fstatSync(fd, { bigint: true }))) {
@@ -182,11 +194,13 @@ export function inspectHookFile(file: string, defaultMode = 0o666) {
       }
     },
     async remove(attempt: HookPreparationAttempt): Promise<HookFilePublication> {
-      attempt.check(); prepare(null)
+      attempt.verify(); prepare(null)
       // Removing a discovered entry never authorizes deleting another profile's
       // shared target. A leaf alias requires the owner to resolve that conflict.
       if (content !== null && lstatSync(file).isSymbolicLink()) throw new HookPreparationHeld('the plugin entry is an alias')
+      attempt.check()
       if (content !== null) unlinkSync(target)
+      attempt.observe(file, inspectHookFile(file).verify)
       let parent = dirname(target)
       for (let depth = 0; depth < 256; depth++) {
         const route = new NativePaths(new NativeEvidenceBudget(250)).resolveSync(parent, true)
@@ -205,6 +219,9 @@ export function inspectHookFile(file: string, defaultMode = 0o666) {
 export interface HookPreparationAttempt {
   /** The original caller and deadline still authorize another effect. */
   check(): void
+  /** All unfinished destinations and already-published outputs still match. */
+  verify(): void
+  observe(file: string, verify: () => void): void
   /** Own the descriptor until the actual syscall settles, even after a reply timeout. */
   flush(fd: number): Promise<void>
 }
@@ -214,53 +231,119 @@ export interface HookPreparationOptions {
   current?(): boolean
   timeoutMs?: number
 }
-interface PendingPreparation { identity?: string; keys: string[]; revoke(): void; reply: Promise<unknown> }
+interface PendingPreparation { identity?: string; keys: string[]; revoke(): void; reply: Promise<unknown>; waiters: number }
+async function joinPreparation<T>(pending: PendingPreparation, options: HookPreparationOptions): Promise<T> {
+  if (options.current?.() === false) throw new HookPreparationHeld('the joining owner changed')
+  if (pending.waiters >= 16) throw new HookPreparationHeld('the preparation waiters are occupied')
+  pending.waiters++
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const result = await Promise.race([pending.reply, new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new HookPreparationHeld('the joining preparation exceeded its deadline')), options.timeoutMs ?? 5_000)
+    })])
+    if (options.current?.() === false) throw new HookPreparationHeld('the joining owner changed')
+    return result as T
+  } finally { clearTimeout(timer); pending.waiters-- }
+}
 const pendingPreparations = new Set<PendingPreparation>()
 const MAX_PREPARATIONS = 16
+// fsync shares libuv's pool with native transcript reads. Leave capacity for
+// those reads even when a disk confirmation never completes. Core starts with
+// a fixed process environment; a one-thread pool cannot spare a disk writer.
+const configuredThreads = Number.parseInt(process.env.UV_THREADPOOL_SIZE ?? '4', 10)
+const MAX_FLUSHES = Math.max(0, Math.min(2, (Number.isFinite(configuredThreads) ? configuredThreads : 1) - 1))
+let activeFlushes = 0
+const flushQueue = new Set<() => void>()
+function dispatchFlushes(): void {
+  while (activeFlushes < MAX_FLUSHES && flushQueue.size) {
+    const next = flushQueue.values().next().value!
+    flushQueue.delete(next); next()
+  }
+}
 
 /** Disk waits remain in eager core code. Reservations survive a timeout until
  * actual I/O settles: a late fsync must never use a closed, recycled descriptor. */
 export async function runHookPreparation<T>(files: readonly string[], work: (attempt: HookPreparationAttempt) => Promise<T>, options: HookPreparationOptions = {}): Promise<T> {
   if (!files.length || files.length > 32) throw new HookPreparationHeld('the destination set exceeds its limit')
-  const keys = [...new Set(files.map(file => {
-    const located = new NativePaths(new NativeEvidenceBudget(250)).resolveSync(file, true)
-    return located?.path ?? join(directoryPath(dirname(file)), basename(file))
-  }))].sort()
+  const reservations = files.map(file => {
+    const paths = new NativePaths(new NativeEvidenceBudget(250))
+    const located = paths.resolveSync(file, true), facts = paths.snapshot()
+    const key = located?.path ?? join(directoryPath(dirname(file)), basename(file))
+    return { file, key, facts: facts.filter(fact => fact.identity !== null && fact.path !== located?.path),
+      aliases: new Set(facts.filter(fact => fact.alias).map(fact => fact.path)) }
+  })
+  const verifyRoutes = () => {
+    for (const { file, key, facts, aliases } of reservations) {
+      if (facts.length) verifyNativePathFacts(facts)
+      const fresh = new NativePaths(new NativeEvidenceBudget(250)), located = fresh.resolveSync(file, true)
+      const target = located?.path ?? join(directoryPath(dirname(file)), basename(file))
+      if (target !== key || fresh.snapshot().some(fact => fact.alias && !aliases.has(fact.path))) {
+        throw new HookPreparationHeld('the reserved destination route changed')
+      }
+    }
+  }
+  const keys = [...new Set(reservations.map(reservation => reservation.key))].sort()
   const conflicts = [...pendingPreparations].filter(pending => pending.keys.some(key => keys.includes(key)))
   if (conflicts.length) {
     const same = conflicts.length === 1 && options.identity !== undefined && conflicts[0].identity === options.identity
       && JSON.stringify(conflicts[0].keys) === JSON.stringify(keys)
-    if (same) return await conflicts[0].reply as T
+    if (same) return await joinPreparation<T>(conflicts[0], options)
     for (const pending of conflicts) pending.revoke()
     throw new HookPreparationHeld('another preparation still owns these destinations')
   }
   if (pendingPreparations.size >= MAX_PREPARATIONS) throw new HookPreparationHeld('the disk preparation slots are occupied')
   const deadline = performance.now() + (options.timeoutMs ?? 5_000)
   let revoked = false
+  const cancellations = new Set<() => void>()
+  const revoke = () => { revoked = true; for (const cancel of [...cancellations]) cancel() }
   const check = () => {
     if (revoked || performance.now() >= deadline || options.current?.() === false) {
       throw new HookPreparationHeld('the preparation expired or its owner changed')
     }
   }
+  const observations = new Map<string, () => void>()
+  const verify = () => { check(); verifyRoutes(); for (const inspect of observations.values()) inspect(); check() }
   const attempt: HookPreparationAttempt = {
-    check,
+    check, verify,
+    observe: (file, inspect) => { observations.set(file, inspect) },
     async flush(fd) {
       check()
-      await new Promise<void>((done, reject) => fsync(fd, error => error ? reject(error) : done()))
+      if (!MAX_FLUSHES) throw new HookPreparationHeld('filesystem capacity cannot spare a disk confirmation')
+      await new Promise<void>((done, reject) => {
+        const cancel = () => {
+          flushQueue.delete(start); cancellations.delete(cancel)
+          reject(new HookPreparationHeld('the queued disk confirmation was revoked'))
+        }
+        const start = () => {
+          cancellations.delete(cancel)
+          try { check() } catch (error) { reject(error); return }
+          activeFlushes++
+          const settled = (error: Error | null) => {
+            activeFlushes--; dispatchFlushes()
+            if (error) reject(error); else done()
+          }
+          try { fsync(fd, settled) } catch (error) { settled(error as Error) }
+        }
+        cancellations.add(cancel); flushQueue.add(start); dispatchFlushes()
+      })
       check()
     },
   }
   let timer: ReturnType<typeof setTimeout> | undefined
-  const pending: PendingPreparation = { identity: options.identity, keys, revoke: () => { revoked = true }, reply: Promise.resolve() }
+  const pending: PendingPreparation = { identity: options.identity, keys, revoke, reply: Promise.resolve(), waiters: 0 }
   pendingPreparations.add(pending)
   // Dispatch only after the reservation is visible. A timeout ends the caller's
   // wait; the finally below runs only when the actual work (and its FDs) finishes.
-  const actual = Promise.resolve().then(() => { check(); return work(attempt) }).then(result => { check(); return result }).finally(() => {
+  const actual = Promise.resolve().then(() => {
+    verify()
+    for (const file of files) observations.set(file, inspectHookFile(file).verify)
+    return work(attempt)
+  }).then(result => { verify(); return result }).finally(() => {
     pendingPreparations.delete(pending)
     clearTimeout(timer)
   })
   pending.reply = Promise.race([actual, new Promise<never>((_, reject) => {
-    timer = setTimeout(() => { revoked = true; reject(new HookPreparationHeld('disk confirmation exceeded its deadline')) }, options.timeoutMs ?? 5_000)
+    timer = setTimeout(() => { revoke(); reject(new HookPreparationHeld('disk confirmation exceeded its deadline')) }, options.timeoutMs ?? 5_000)
   })])
   return await pending.reply as T
 }

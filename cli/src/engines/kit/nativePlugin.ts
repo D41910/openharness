@@ -28,9 +28,12 @@ export function prepareNativePlugin(rule: NativePlugin, values: NativePluginValu
   }
   observed.prepare(source)
   return { verify: observed.verify, commit: async attempt => {
-    attempt.check()
+    attempt.verify()
     observed.verify()
-    for (const directory of current ? [] : rule.directories ?? []) mkdirSync(directory.path, { recursive: true, mode: directory.mode })
+    for (const directory of current ? [] : rule.directories ?? []) {
+      attempt.verify(); attempt.check()
+      mkdirSync(directory.path, { recursive: true, mode: directory.mode })
+    }
     const published = await observed.replace(source, attempt)
     console.log(current ? rule.messages.current : rule.messages.installed.replace('{file}', () => rule.file))
     if (!current) for (const line of rule.messages.after) console.log(line)
@@ -42,7 +45,7 @@ export async function installNativePlugin(rule: NativePlugin, values: NativePlug
   try { return await runHookPreparation([rule.file], async attempt => {
     const published = await prepareNativePlugin(rule, values).commit(attempt)
     published.verify(); return true
-  }, { identity: nativePluginSource(rule, values), ...options }) }
+  }, { ...options, identity: nativePluginSource(rule, values) }) }
   catch (err) { console.error(rule.messages.failed, err); return false }
 }
 

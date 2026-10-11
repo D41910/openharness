@@ -23,6 +23,7 @@ export function defaultHookHome(settings: HookSettings): string {
 
 export async function installHookSettings(engine: HookEngine, settings: HookSettings, port: number, home: string = defaultHookHome(settings), options: HookPreparationOptions = {}): Promise<boolean> {
   const file = join(home, settings.file)
+  const cmd = command(port, engine, settings.commandNamesHome ? home : undefined)
   const say = (line: string): string => line.replace(/\{(file|script|port)\}/g, (_, name: string) =>
     name === 'file' ? file : name === 'script' ? HOOK_SCRIPT : String(port))
   const { messages } = settings
@@ -34,7 +35,6 @@ export async function installHookSettings(engine: HookEngine, settings: HookSett
       throw new HookPreparationHeld('the hook settings do not have the declared object shape')
     }
     current.hooks ??= {}
-    const cmd = command(port, engine, settings.commandNamesHome ? home : undefined)
     let changed = false
     let updated = false // true when an EXISTING block's command changed (path/port drift)
 
@@ -77,7 +77,7 @@ export async function installHookSettings(engine: HookEngine, settings: HookSett
     const approval = await reviewed?.commit(attempt)
     published.verify(); approval?.verify()
     return true
-  }, { identity: JSON.stringify([engine, settings, port, home]), ...options }) } catch (err) {
+  }, { ...options, identity: JSON.stringify([engine, settings, port, home, cmd]) }) } catch (err) {
     console.error(say(messages.failed), err)
     return false
   }

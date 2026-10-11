@@ -105,3 +105,25 @@ This slice began October 10 at 22:49 UTC. The checkpoint above was reached about
 an hour later, including implementation, focused validation and design review.
 Implementation and validation overlapped; receipt durations describe individual
 checks, not total delivery time. Merge and publication are both zero for this slice.
+
+## Independent review corrections
+
+Review of `7a2cedfd1` identified eight races or preservation gaps: staging-file
+replacement during a flush, stale second-file preflight, destination alias changes
+before dispatch, joining owners/deadlines, an expiring removal deadline, changed
+managed-Node commands joining old work, Hermes profile-pool starvation, and umask
+changing existing shared permissions. Each now has a regression and an implementation
+fix; final exact-head approval remains pending. Filesystem confirmations use at most
+two libuv slots, leaving capacity for native transcript reads. Queued work cancels
+before dispatch when its owner or deadline expires.
+
+The October 11 00:06 UTC receipt passed typecheck and all 441 unchanged golden
+cases. Focused checks passed 192 of 193; the 19-home Hermes capacity case exceeded
+the test's five-second total timeout (each individual preparation has its own
+five-second deadline). Its total test allowance is now 20 seconds for the five
+sequential waves; the per-preparation production deadline and assertions are unchanged.
+The matched three-pair measurement reported median baseline/candidate totals of
+586.6/3328.5 ms, CPU 142.3/623.6 ms, and peak RSS 91.4/109.5 MiB. Cold-install
+maximum timer gaps were 11.5/59.2 ms. These results show the extra durability cost;
+they do not prove native-read latency under a stalled filesystem. Final acceptance
+will measure that separately after launch integration.

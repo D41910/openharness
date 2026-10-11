@@ -114,8 +114,17 @@ function stripOwnedBlocks(rule: NativeYamlHooks, config: string, hookLines: Read
 /** Installs only homes with a config, each with its own command and allowlist. */
 export async function installNativeYamlHooks(rule: NativeYamlHooks, commandForHome: (home: string) => string, selectedHome?: string, options: HookPreparationOptions = {}): Promise<boolean> {
   const homes = selectedHome ? [selectedHome] : nativeHookHomes(rule.homes, rule.home)
-  const results = await Promise.all(homes.map(home => installIn(rule, commandForHome(home), home, options)))
-  return results.every(Boolean)
+  let next = 0, installed = true
+  const worker = async () => {
+    while (next < homes.length) {
+      const home = homes[next++]
+      if (!await installIn(rule, commandForHome(home), home, options)) installed = false
+    }
+  }
+  // The declared catalog includes up to 64 profiles. Starting them all at once
+  // starved the same tail behind the preparation pool on every healthy retry.
+  await Promise.all(Array.from({ length: Math.min(4, homes.length) }, worker))
+  return installed
 }
 
 async function installIn(rule: NativeYamlHooks, cmd: string, home: string, options: HookPreparationOptions): Promise<boolean> {
@@ -183,7 +192,7 @@ async function installIn(rule: NativeYamlHooks, cmd: string, home: string, optio
     )
     console.log(rule.messages.after)
     return true
-  }, { identity: JSON.stringify([rule, cmd, home]), ...options }) } catch (err) {
+  }, { ...options, identity: JSON.stringify([rule, cmd, home]) }) } catch (err) {
     console.error(rule.messages.failed, err)
     return false
   }

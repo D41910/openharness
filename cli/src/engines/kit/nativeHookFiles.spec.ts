@@ -1,13 +1,14 @@
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync, chmodSync, fstatSync, statSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync, chmodSync, fstatSync, statSync, renameSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { inspectHookFile, runHookPreparation } from './nativeHookFiles.js'
 
-const fault = vi.hoisted(() => ({ sync: false, write: false, onSync: undefined as ((fd: number) => void) | undefined, openAs: undefined as string | undefined }))
+const fault = vi.hoisted(() => ({ sync: false, write: false, onSync: undefined as ((fd: number) => void) | undefined, openAs: undefined as string | undefined, onStat: undefined as ((file: unknown, options: unknown) => void) | undefined }))
 vi.mock('node:fs', async original => {
   const fs = await original<typeof import('node:fs')>()
   return { ...fs,
+    lstatSync: (...args: Parameters<typeof fs.lstatSync>) => { fault.onStat?.(...args); return fs.lstatSync(...args) },
     fsync: (fd: number, callback: (error: Error | null) => void) => {
       try { if (fault.sync) throw new Error('fixture sync unavailable'); fault.onSync?.(fd); fs.fsync(fd, callback) }
       catch (error) { queueMicrotask(() => callback(error as Error)) }
@@ -32,7 +33,7 @@ function fixture() {
   roots.push(root)
   return { root, file: join(root, 'config.json') }
 }
-afterEach(() => { fault.sync = false; fault.write = false; fault.onSync = undefined; fault.openAs = undefined; for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
+afterEach(() => { fault.sync = false; fault.write = false; fault.onSync = undefined; fault.openAs = undefined; fault.onStat = undefined; vi.restoreAllMocks(); for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }) })
 
 it('publishes complete bytes durably, preserves private permissions and leaves no staging file', async () => {
   const { root, file } = fixture()
@@ -174,8 +175,55 @@ it('reconfirms an ancestor name left uncertain by an earlier failed parent sync'
 it('compares the unchanged file descriptor with the reviewed inode before syncing', async () => {
   const { root, file } = fixture(), other = join(root, 'other')
   writeFileSync(file, 'same'); writeFileSync(other, 'same')
-  const observed = prepared(file)
-  fault.openAs = other
-  await expect(observed.replace('same')).rejects.toThrow(/changed before sync/)
+  const observed = inspectHookFile(file)
+  await expect(runHookPreparation([file], attempt => {
+    fault.openAs = other
+    return observed.replace('same', attempt)
+  })).rejects.toThrow(/changed before sync/)
   expect(readFileSync(file, 'utf8')).toBe('same')
+})
+
+
+it.each(['replacement', 'in-place edit'])('preserves the destination if the staging file suffers a %s during its flush', async change => {
+  const { root, file } = fixture()
+  writeFileSync(file, 'original')
+  fault.onSync = fd => {
+    if (fstatSync(fd).isDirectory()) return
+    fault.onSync = undefined
+    const temporary = join(root, readdirSync(root).find(name => name.startsWith('.harness-hook-'))!)
+    if (change === 'replacement') {
+      const other = join(root, 'other'); writeFileSync(other, 'foreign'); renameSync(other, temporary)
+    } else writeFileSync(temporary, 'foreign')
+  }
+  await expect(prepared(file).replace('ours')).rejects.toThrow(/staging file changed/)
+  expect(readFileSync(file, 'utf8')).toBe('original')
+  if (change === 'replacement') {
+    const temporary = readdirSync(root).find(name => name.startsWith('.harness-hook-'))!
+    expect(readFileSync(join(root, temporary), 'utf8')).toBe('foreign')
+  }
+})
+
+it.each([0o022, 0o077])('preserves an existing shared file mode under umask %s', async mask => {
+  const { file } = fixture()
+  writeFileSync(file, 'old'); chmodSync(file, 0o660)
+  const previous = process.umask(mask)
+  try { await prepared(file).replace('new') } finally { process.umask(previous) }
+  expect(statSync(file).mode & 0o777).toBe(0o660)
+})
+
+
+it('rechecks the deadline after the last filesystem observation before removal', async () => {
+  const { file } = fixture()
+  writeFileSync(file, 'owned')
+  let now = 0, leafChecks = 0
+  vi.spyOn(performance, 'now').mockImplementation(() => now)
+  const observed = inspectHookFile(file)
+  await expect(runHookPreparation([file], attempt => {
+    fault.onStat = (path, options) => {
+      if (path === file && options === undefined && ++leafChecks === 2) now = 20
+    }
+    return observed.remove(attempt)
+  }, { timeoutMs: 10 })).rejects.toThrow(/expired/)
+  expect(leafChecks).toBe(2)
+  expect(readFileSync(file, 'utf8')).toBe('owned')
 })
