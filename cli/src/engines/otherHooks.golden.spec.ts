@@ -357,7 +357,7 @@ const INVALID_HOOKS = new Set(['hooks is a string', 'hooks is an array', 'hooks 
 const FOREIGN_SOURCE = new Set([...INVALID_VALUE, ...INVALID_HOOKS, 'foreign content', 'a symlink to foreign content', 'a private file', 'a temporary file left by this process'])
 function held(vendor: Vendor, name: string): boolean {
   if (IO_HELD.has(name)) return true
-  if (KIND[vendor] === 'source') return FOREIGN_SOURCE.has(name) || name === 'no OpenCode installed'
+  if (KIND[vendor] === 'source') return FOREIGN_SOURCE.has(name)
     || name === "OpenCode 2 with a foreign plugin where OpenCode 1's goes" || name === "OpenCode 2 with a folder where OpenCode 1's plugin goes"
   if (KIND[vendor] === 'json') return INVALID_VALUE.has(name) || (vendor !== 'agy' && INVALID_HOOKS.has(name))
   return ['no file', 'no home folder', 'malformed JSON', 'byte order mark', 'JSON null', 'JSON array', 'JSON string', 'JSON number',

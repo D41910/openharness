@@ -189,3 +189,12 @@ CI also exposed a transient native directory-enumeration hold when another test
 changed an ancestor under `/tmp`. The Stop/archive regression now checks that this
 specific hold preserves the row and retries it at most twice; all other errors
 still fail immediately. This changes no production identity rule.
+
+At 01:15 UTC, typecheck, 201 focused native cases, architecture, harnessd at 100%
+and 359 affected cases passed (five environment-gated cases skipped). All 2,393
+core tests passed; the coverage gate identified one uncovered synchronous-false
+installer result. The test named for synchronous/asynchronous holds now exercises
+both. The no-OpenCode golden assertion also returns to its unchanged former
+artifact alongside the deferred policy. No golden fixture bytes were rerecorded.
+All twelve deliberate mutations failed assertions in receipt
+`20261011T011530.711952Z-59124`; final core/golden gates and private e2e remain.

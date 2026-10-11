@@ -419,7 +419,7 @@ describe('installing every engine\'s hooks', () => {
   })
 
   it('reports synchronous and asynchronous holds without suppressing sibling installers', async () => {
-    vi.mocked(hooks.installCursorHooks).mockResolvedValueOnce(false)
+    ;(hooks.installCursorHooks as Mock).mockReturnValueOnce(false)
     vi.mocked(hooks.installOpencodePlugin).mockResolvedValueOnce(false)
     const installed = await installEngineHooks(4242, { environment: {} })
     expect(console.warn).toHaveBeenCalledWith('[hooks] cursor install skipped · native hook preparation is unavailable')
