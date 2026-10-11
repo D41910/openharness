@@ -80,7 +80,7 @@ export interface LaunchOverridesDeps {
   tmuxSupportsSessionEnv: () => Promise<boolean>
   /** Install the daemon's hooks into a non-default Codex profile. The caller decides whether hook
    *  installation is enabled at all. */
-  installCodexHooks: (codexHome: string) => void
+  installCodexHooks: (codexHome: string) => boolean | Promise<boolean>
   /**
    * Read a Codex `config.toml`, for the provider an agent goes back to when it leaves a grid.
    *
@@ -315,7 +315,9 @@ async function prepareBaseLaunchOverrides(
     // not the one `harness login` installed into — without this it fires no hook at all. Idempotent.
     const home = source.codexHome
     return { ok: true, commit: async () => {
-      deps.installCodexHooks(home)
+      if (!await deps.installCodexHooks(home)) return {
+        ok: false, error: 'NATIVE_LAUNCH_HELD', unavailable: 'native', detail: 'Waiting to confirm Codex’s hooks in the selected profile.',
+      }
       return {
         ok: true,
         overrides: {

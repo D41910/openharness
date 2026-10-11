@@ -68,7 +68,7 @@ describe('generated discovery scripts', () => {
     vi.resetModules()
     vi.stubEnv('PI_HOME', piHome)
     const { installPiExtension } = await import('./hooks.js')
-    installPiExtension(18473)
+    expect(await installPiExtension(4242)).toBe(true)
 
     const src = readFileSync(join(piHome, 'agent', 'extensions', 'launcher-register.ts'), 'utf-8')
     expect(src).toContain('process.env.TMUX_PANE')
@@ -186,14 +186,14 @@ describe('generated discovery scripts', () => {
     expect(readFileSync(settings, 'utf8')).toBe(settingsText)
   })
 
-  it('does not plant a v1 plugin before the pane installs OpenCode for the first time', async () => {
+  it('holds both plugin surfaces until the installed OpenCode generation is confirmed', async () => {
     const config = scratch()
     const pluginDir = join(config, 'plugin')
     version.major = null
     vi.stubEnv('OPENCODE_PLUGIN_DIR', pluginDir)
     const { installOpencodePlugin } = await import('./hooks.js')
-    await installOpencodePlugin(18473)
+    expect(await installOpencodePlugin(4242)).toBe(false)
     expect(existsSync(join(pluginDir, 'launcher-register.js'))).toBe(false)
-    expect(existsSync(join(config, 'plugins', 'launcher-register', 'tui.js'))).toBe(true)
+    expect(existsSync(join(config, 'plugins', 'launcher-register', 'tui.js'))).toBe(false)
   })
 })

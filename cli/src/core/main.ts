@@ -1984,7 +1984,7 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     gridLaunch,
     writeGridConfigDir,
     tmuxSupportsSessionEnv,
-    installCodexHooks: (codexHome) => { if (!env.DISABLE_HOOK_INSTALL) engineHookFacets.codex.installIn(hookPort, codexHome) },
+    installCodexHooks: (codexHome) => env.DISABLE_HOOK_INSTALL ? true : engineHookFacets.codex.installIn(hookPort, codexHome),
     dshLaunch: dshLaunch.relaunch,
   }
   // What a relaunch needs to bring a pane back (core/agents/launch.ts). Declared before the restore

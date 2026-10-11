@@ -3,11 +3,12 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 
-const probe = vi.hoisted(() => ({ major: 1 as number | null, failSync: false, failRemove: false, beforeSync: undefined as (() => Promise<void>) | undefined }))
+const probe = vi.hoisted(() => ({ major: 1 as number | null, failSync: false, failRemove: false, beforeSync: undefined as (() => Promise<void>) | undefined, onStat: undefined as ((path: unknown) => void) | undefined }))
 vi.mock('./launchControl.js', () => ({ opencodeMajorVersion: async () => probe.major }))
 vi.mock('node:fs', async original => {
   const fs = await original<typeof import('node:fs')>()
   return { ...fs,
+    lstatSync: (...args: Parameters<typeof fs.lstatSync>) => { probe.onStat?.(args[0]); return fs.lstatSync(...args) },
     fsync: (fd: number, callback: (error: Error | null) => void) => { if (probe.failSync) queueMicrotask(() => callback(new Error('fixture sync failure'))); else if (probe.beforeSync) void probe.beforeSync().then(() => fs.fsync(fd, callback)); else fs.fsync(fd, callback) },
     unlinkSync: (file: string) => {
       if (probe.failRemove && file.endsWith('/plugin/launcher-register.js')) throw new Error('fixture removal failure')
@@ -17,7 +18,7 @@ vi.mock('node:fs', async original => {
 })
 const roots: string[] = []
 afterEach(() => {
-  probe.major = 1; probe.failSync = false; probe.failRemove = false; probe.beforeSync = undefined
+  probe.major = 1; probe.failSync = false; probe.failRemove = false; probe.beforeSync = undefined; probe.onStat = undefined
   vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.resetModules()
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
@@ -306,7 +307,38 @@ it('does not credit a newer OpenCode installation to a revoked older caller', as
   let release!: (major: number) => void, current = true
   vi.spyOn(control, 'opencodeMajorVersion').mockImplementationOnce(() => new Promise(resolve => { release = resolve }))
   const first = install(4242, undefined, { current: () => current })
-  expect(await install(4242)).toBe(true)
-  current = false; release(1)
+  let releaseDisk!: () => void
+  const disk = new Promise<void>(resolve => { releaseDisk = resolve })
+  const entered = vi.fn(async () => disk)
+  probe.beforeSync = entered
+  const second = install(4242)
+  await vi.waitFor(() => expect(entered).toHaveBeenCalled())
+  release(1)
+  // The older caller has joined the newer preparation while still authorized.
+  for (let n = 0; n < 80; n++) await Promise.resolve()
+  current = false; probe.beforeSync = undefined; releaseDisk()
+  expect(await second).toBe(true)
   expect(await first).toBe(false)
+})
+
+it('cannot extend the OpenCode deadline by stalling reservation reads', async () => {
+  const { install, legacy, tui } = await fixture()
+  let time = 0
+  vi.spyOn(performance, 'now').mockImplementation(() => time)
+  probe.onStat = path => { if (path === legacy) time = 20 }
+  expect(await install(4242, undefined, { timeoutMs: 10 })).toBe(false)
+  expect(() => readFileSync(legacy)).toThrow()
+  expect(() => readFileSync(tui)).toThrow()
+})
+
+it('rechecks the OpenCode deadline after final proof reads', async () => {
+  const { install } = await fixture()
+  let time = 0
+  vi.spyOn(performance, 'now').mockImplementation(() => time)
+  const files = await import('./kit/nativeHookFiles.js')
+  vi.spyOn(files, 'runHookPreparation').mockImplementationOnce(async (_files, _work, options) => {
+    options?.confirmed?.({ files: [], current: () => { time = 20; return true } })
+    return true as never
+  })
+  expect(await install(4242, undefined, { timeoutMs: 10 })).toBe(false)
 })

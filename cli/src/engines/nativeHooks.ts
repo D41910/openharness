@@ -62,7 +62,7 @@ export async function installOpencodePlugin(port: number, snapshot?: OpencodeLau
       return snapshot?.current() !== false
     }, { ...options, timeoutMs: Math.max(0, deadline - performance.now()), confirmed: proof => installation.proofs.push(proof), identity: JSON.stringify([port, snapshot?.identity, major]),
       current: () => opencodeInstallation?.port === port && opencodeInstallation.executable === installation.executable
-        && opencodeInstallation.major === major && snapshot?.current() !== false && options.current?.() !== false }) } catch (error) {
+        && opencodeInstallation.major === major && performance.now() < deadline && snapshot?.current() !== false && options.current?.() !== false }) } catch (error) {
       console.error('[hooks] OpenCode preparation held:', error)
       return false
     }
@@ -85,6 +85,7 @@ export async function installOpencodePlugin(port: number, snapshot?: OpencodeLau
     } finally { clearTimeout(timer) }
   }
   if (!installed || performance.now() >= deadline || options.current?.() === false || snapshot?.current() === false || current.proofs.some(proof => !proof.current())) return false
+  if (performance.now() >= deadline) return false
   for (const proof of current.proofs) options.confirmed?.(proof)
   return true
 }

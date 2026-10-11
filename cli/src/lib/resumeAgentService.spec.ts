@@ -103,7 +103,7 @@ describe('production resume handler', () => {
       authority: createLaunchAuthority({ byAgent: id => registry.byAgent(id), revision: id => deps.restartJobs.revision(id), cancelled: id => deps.stopJobs.has(id) }),
       prepareApiTools: apiNotes, setGridLaunch: vi.fn(), setTail: vi.fn(),
       launchOverridesDeps: { machine: () => ({ hermesSystemManaged: false }), gridLaunch: vi.fn(),
-        tmuxSupportsSessionEnv: async () => true, writeGridConfigDir: vi.fn(), installCodexHooks: vi.fn(), readCodexConfig: () => null },
+        tmuxSupportsSessionEnv: async () => true, writeGridConfigDir: vi.fn(), installCodexHooks: vi.fn(async () => true), readCodexConfig: () => null },
     })
     deps.relaunchOverrides = helpers.relaunchOverrides
     expect(registry.byAgent(saved.agentId)).toBeUndefined()

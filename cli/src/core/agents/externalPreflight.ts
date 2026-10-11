@@ -19,7 +19,9 @@ export function createExternalPreflight(deps: {
     if (row.engine === 'opencode' && !deps.hooksDisabled && !await deps.installOpencodePlugin(deps.hookPort)) {
       return { detail: 'Waiting for OpenCode’s launch support to become available.' }
     }
-    if (row.codexHome && !deps.hooksDisabled) engineHooks.codex.installIn(deps.hookPort, row.codexHome)
+    if (row.codexHome && !deps.hooksDisabled && !await engineHooks.codex.installIn(deps.hookPort, row.codexHome)) {
+      return { detail: 'Waiting to confirm Codex’s hooks in the selected profile.' }
+    }
     buildEngineCommandArgv(row.engine, { cwd: session.cwd, resumeSessionId: session.sessionId,
       bypassPermission: row.bypassPermission, permissionMode: row.permissionMode, extraArgs: session.launchArgs })
     return null

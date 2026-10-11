@@ -25,7 +25,7 @@ function deps(overrides: Partial<LaunchOverridesDeps> = {}) {
     machine: () => ({ hermesSystemManaged: false }), gridLaunch: gridLaunchInProcess(),
     writeGridConfigDir: async (key) => { calls.push(`writeConfig:${key}`); return `/state/grid-engine-config/${key}` },
     tmuxSupportsSessionEnv: async () => true,
-    installCodexHooks: (home) => { calls.push(`hooks:${home}`) },
+    installCodexHooks: (home) => { calls.push(`hooks:${home}`); return true },
     // No Codex configuration unless a test says so — otherwise every relaunch built here would
     // consult the config.toml of whoever is running the suite.
     readCodexConfig: () => null,
@@ -35,6 +35,21 @@ function deps(overrides: Partial<LaunchOverridesDeps> = {}) {
 }
 
 describe('buildLaunchOverrides — a relaunch comes back where the agent was', () => {
+  it('awaits profile hook durability, holds an unavailable profile and checks ownership after completion', async () => {
+    let finish!: (installed: boolean) => void, allowed = true, replied = false
+    const install = vi.fn(() => new Promise<boolean>(resolve => { finish = resolve }))
+    const { d } = deps({ installCodexHooks: install })
+    const first = buildLaunchOverrides(d, 'codex', { codexHome: '/profiles/work' }, 'agent-1', () => allowed)
+      .finally(() => { replied = true })
+    await vi.waitFor(() => expect(install).toHaveBeenCalledTimes(1))
+    expect(replied).toBe(false)
+    finish(false)
+    expect(await first).toMatchObject({ ok: false, unavailable: 'native' })
+    const second = buildLaunchOverrides(d, 'codex', { codexHome: '/profiles/work' }, 'agent-1', () => allowed)
+    await vi.waitFor(() => expect(install).toHaveBeenCalledTimes(2))
+    allowed = false; finish(true)
+    expect(await second).toMatchObject({ ok: false, error: 'AGENT_CHANGED' })
+  })
   it.each(['before', 'models', 'Store', 'commit', 'write'] as const)('revocation at %s cannot apply a stale preparation', async stage => {
     let allowed = stage !== 'before'
     const { d, calls } = deps({

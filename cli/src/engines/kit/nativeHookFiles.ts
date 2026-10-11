@@ -267,6 +267,9 @@ async function joinPreparation<T>(pending: PendingPreparation, options: HookPrep
     // Joining shares the publication, not the caller's aliases. Retain this
     // caller's route all the way through the final pane guard.
     const proof = preparationProof(files, verifyRoutes)
+    if (!pending.proof?.current() || proof.files.some(file => !pending.proof!.files.some(expected => expected.target === file.target && expected.stamp === file.stamp))) {
+      throw new HookPreparationHeld('the prepared settings changed while their proof was captured')
+    }
     if (performance.now() >= deadline) throw new HookPreparationHeld('the joining preparation exceeded its deadline')
     if (options.current?.() === false) throw new HookPreparationHeld('the joining owner changed')
     options.confirmed?.(proof)
@@ -369,7 +372,9 @@ export async function runHookPreparation<T>(files: readonly string[], work: (att
   }).then(result => {
     verify()
     pending.proof = preparationProof(files, verifyRoutes)
-    check()
+    // The proof may describe only the outputs just published, never peer bytes
+    // that arrived between the last verification and its filesystem reads.
+    verify()
     options.confirmed?.(pending.proof)
     return result
   }).finally(() => {

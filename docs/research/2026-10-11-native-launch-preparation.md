@@ -144,3 +144,22 @@ under load; the isolated native-version rerun passed all eleven tests without a
 production change. These are development evidence, not the final mechanics gate.
 The mechanics branch integrates main `93d49e9c8` (routing changes only) and runs
 its own final gates, independent review, mutations and private e2e lanes.
+
+Review of `28264b32a` found three remaining mechanics defects: custom Codex
+profile callers discarded the asynchronous installation result; a proof capture
+could adopt a peer edit between verification and its own filesystem reads; and
+OpenCode reservation/final-proof reads could outlive the original deadline.
+The callers now await installation before pane creation or external takeover,
+proofs must still match the original publication, and the original deadline is
+checked across reservation and final acknowledgement. Regressions also cover
+owner revocation while waiting. The revoked-joiner mutation now uses an oracle
+that actually joins while the caller still owns its request.
+
+The mechanics gate at 00:49 UTC passed typecheck, architecture, harnessd coverage
+and 441 golden cases. Core and affected tests exposed three obsolete test
+fixtures after the asynchronous API change: a removed mock export, an unawaited
+Pi installation and the former unknown-OpenCode-version expectation. The
+00:56 UTC receipt (`20261011T005625.232631Z-71860`) covers their corrections and
+all three review fixes: typecheck, 203 focused cases and 316 affected cases pass
+(five environment-gated cases remain skipped). Full core coverage, private e2e,
+assertion-failing mutations and exact-head approval are still required.

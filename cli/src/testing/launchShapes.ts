@@ -86,7 +86,7 @@ export function launchShapes(world: LaunchWorld) {
     gridLaunch,
     writeGridConfigDir,
     tmuxSupportsSessionEnv: world.tmuxSupportsSessionEnv,
-    installCodexHooks: () => {},
+    installCodexHooks: () => true,
     readCodexConfig: world.readCodexConfig,
     dshLaunch: dshLaunch.relaunch,
   }

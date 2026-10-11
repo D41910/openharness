@@ -234,7 +234,9 @@ export function createAgentCreator({
     // THAT folder, not the one `harness login` already installed into — without this, such an agent
     // fires no hook at all (no SessionStart/UserPromptSubmit/Stop) and never streams a single event.
     // Idempotent, so paying this on every create against an already-set-up profile is free.
-    if (codexHome && !hooksDisabled) engineHooks.codex.installIn(hookPort, codexHome)
+    if (codexHome && !hooksDisabled && !await engineHooks.codex.installIn(hookPort, codexHome)) return {
+      ok: false, error: 'NATIVE_LAUNCH_HELD', detail: 'Waiting to confirm Codex’s hooks in the selected profile.',
+    }
     // OpenCode may have upgraded from 1.x to 2.x while this daemon was running. Its new TUI must
     // not discover our old server plugin; the cached version probe changes with the executable.
     // Native installation is eager. A plugin is how this engine tells the daemon its session.

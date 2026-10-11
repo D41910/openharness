@@ -45,6 +45,28 @@ it('publishes complete bytes durably, preserves private permissions and leaves n
   await prepared(file).replace('new')
 })
 
+it('never turns a peer edit during final proof capture into a confirmed output', async () => {
+  const { file } = fixture()
+  writeFileSync(file, 'prepared hooks')
+  const confirmed = vi.fn()
+  await expect(runHookPreparation([file], async attempt => {
+    const expected = inspectHookFile(file)
+    attempt.observe(file, () => {
+      expected.verify()
+      // The next leaf read occurs after checking the published observation.
+      // A peer writes real bytes at that boundary, before proof capture.
+      fault.onStat = path => {
+        if (path !== file) return
+        fault.onStat = undefined
+        writeFileSync(file, 'peer hooks')
+      }
+    })
+    return true
+  }, { confirmed })).rejects.toThrow(/changed/)
+  expect(confirmed).not.toHaveBeenCalled()
+  expect(readFileSync(file, 'utf8')).toBe('peer hooks')
+})
+
 it('creates and syncs a missing directory chain', async () => {
   const { root } = fixture(), file = join(root, 'new', 'nested', 'hooks.json')
   await prepared(file).replace('prepared')

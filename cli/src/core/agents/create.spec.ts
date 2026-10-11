@@ -36,7 +36,11 @@ vi.mock('../../engines/inProcess.js', async (real) => {
   return { ...actual, loadEngine: vi.fn(actual.loadEngine) }
 })
 vi.mock('../../engines/launchControl.js', () => ({ opencodeMajorVersion: vi.fn(async () => 2) }))
-vi.mock('../../engines/kit/nativePlugin.js', () => ({ installNativePlugin: vi.fn(), removeNativePlugin: vi.fn() }))
+vi.mock('../../engines/kit/nativePlugin.js', () => ({
+  prepareNativePlugin: vi.fn(() => ({ verify: () => {}, commit: async () => ({ verify: () => {} }) })),
+  prepareNativePluginRemoval: vi.fn(() => ({ verify: () => {}, commit: async () => ({ verify: () => {} }) })),
+}))
+vi.mock('../../engines/kit/nativeHookFiles.js', () => ({ runHookPreparation: async (_files: string[], work: () => Promise<unknown>) => work() }))
 // The engines' folder trust (engines/launchPrep.ts), one spy per engine: never the person's own config.
 const trust = vi.hoisted(() => ({
   claudeTrusts: vi.fn((_path: string) => false), codexTrusts: vi.fn((_path: string, _profile?: string | null) => false),
@@ -72,7 +76,7 @@ const buildGridLaunch = vi.fn(async (request: GridLaunchRequest): Promise<GridLa
 }))
 vi.mock('../../engines/hooks.js', async (real) => {
   const actual = await real<typeof import('../../engines/hooks.js')>()
-  return { ...actual, engineHooks: { ...actual.engineHooks, codex: { ...actual.engineHooks.codex, installIn: vi.fn() } } }
+  return { ...actual, engineHooks: { ...actual.engineHooks, codex: { ...actual.engineHooks.codex, installIn: vi.fn(async () => true) } } }
 })
 vi.mock('../../lib/sessionSearch/external.js', async (real) => ({ ...await real<object>(), stopSessionOwner: vi.fn(async () => true) }))
 vi.mock('../../lib/tmux.js', async (real) => ({ ...await real<object>(), clearPaneRemainOnExit: vi.fn(async () => {}) }))
@@ -131,6 +135,21 @@ describe('creating an agent', () => {
     vi.mocked(createAndRegisterPane).mockReset().mockResolvedValue({ ok: true, spawned: { runtime: { paneId: '%1' } }, pending } as never)
   })
   afterEach(() => { vi.restoreAllMocks(); vi.clearAllMocks() })
+
+  it('does not open a Codex pane before its profile hooks are durably confirmed', async () => {
+    let finish!: (installed: boolean) => void
+    vi.mocked(engineHooks.codex.installIn).mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const { create } = setup()
+    const input = request({ engine: 'codex', codexHome: '/profiles/work' })
+    const first = create(input)
+    await vi.waitFor(() => expect(engineHooks.codex.installIn).toHaveBeenCalled())
+    expect(createAndRegisterPane).not.toHaveBeenCalled()
+    finish(false)
+    expect(await first).toMatchObject({ ok: false, error: 'NATIVE_LAUNCH_HELD' })
+    expect(createAndRegisterPane).not.toHaveBeenCalled()
+    expect(await create(input)).toMatchObject({ ok: true })
+    expect(createAndRegisterPane).toHaveBeenCalledTimes(1)
+  })
 
   it('hands external resume to its durable controller before folder, instructions or engine preparation', async () => {
     const externalResume = vi.fn<CreateAgentDeps['externalResume']>(async () => ({ ok: true, session: pending }))

@@ -5,7 +5,7 @@ import { buildEngineCommandArgv, refusePermissionFlagIfUnsupported } from '../..
 import { workspaceMissing } from '../../lib/workspaceCheck.js'
 import { createExternalPreflight } from './externalPreflight.js'
 vi.mock('../../engines/inProcess.js', () => ({ loadEngine: vi.fn(async () => ({})) }))
-vi.mock('../../engines/hooks.js', () => ({ engineHooks: { codex: { installIn: vi.fn() } } }))
+vi.mock('../../engines/hooks.js', () => ({ engineHooks: { codex: { installIn: vi.fn(async () => true) } } }))
 vi.mock('../../lib/engineLaunch.js', () => ({ buildEngineCommandArgv: vi.fn(() => []), refusePermissionFlagIfUnsupported: vi.fn(async () => null) }))
 vi.mock('../../lib/workspaceCheck.js', () => ({ workspaceMissing: vi.fn(() => null) }))
 afterEach(() => { vi.clearAllMocks() })
@@ -44,4 +44,16 @@ it('prepares a custom Codex hook home only when hooks are enabled, and verifies 
   expect(await setup().prepare(row('codex', { codexHome: '/fixture/profile' }), session)).toBeNull()
   expect(engineHooks.codex.installIn).toHaveBeenCalledWith(4242, '/fixture/profile')
   expect(buildEngineCommandArgv).toHaveBeenLastCalledWith('codex', expect.objectContaining({ resumeSessionId: 'conversation', extraArgs: ['-p', 'work'] }))
+})
+
+it('waits for profile durability before admitting a takeover and retains an unavailable profile', async () => {
+  let finish!: (installed: boolean) => void
+  vi.mocked(engineHooks.codex.installIn).mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+  const pending = setup().prepare(row('codex', { codexHome: '/fixture/profile' }), session)
+  await vi.waitFor(() => expect(engineHooks.codex.installIn).toHaveBeenCalled())
+  expect(buildEngineCommandArgv).not.toHaveBeenCalled()
+  finish(false)
+  expect(await pending).toMatchObject({ detail: expect.stringContaining('hooks') })
+  expect(buildEngineCommandArgv).not.toHaveBeenCalled()
+  expect(await setup().prepare(row('codex', { codexHome: '/fixture/profile' }), session)).toBeNull()
 })

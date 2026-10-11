@@ -28,7 +28,7 @@ describe.skipIf(!installed)('the installed opencode TUI accepts every flag we pa
     machine: async () => ({ hermesSystemManaged: false, opencodeMajor: await major }), gridLaunch: gridLaunchInProcess(),
     writeGridConfigDir: async (key) => `/state/grid-engine-config/${key}`,
     tmuxSupportsSessionEnv: async () => true,
-    installCodexHooks: () => {},
+    installCodexHooks: () => true,
     readCodexConfig: () => null,
   }
   const GRID = {
