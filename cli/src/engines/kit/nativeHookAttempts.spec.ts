@@ -144,3 +144,45 @@ it('keeps a queued destination bound to the route it reserved before asynchronou
   expect(readFileSync(first, 'utf8')).toBe('first')
   expect(readFileSync(second, 'utf8')).toBe('second')
 })
+
+
+it('does not acknowledge an alias redirected while its identical preparation is joined', async () => {
+  const file = join(root, 'hooks'), alias = join(root, 'alias'), other = join(root, 'other')
+  writeFileSync(file, 'old'); writeFileSync(other, 'foreign'); symlinkSync(file, alias)
+  const original = runHookPreparation([file], attempt => inspectHookFile(file).replace('ready', attempt), { identity: 'same' })
+  await drain()
+  const joined = runHookPreparation([alias], async () => true, { identity: 'same' }).catch(error => error)
+  unlinkSync(alias); symlinkSync(other, alias)
+  await release(); await original
+  expect((await joined).message).toMatch(/changed/)
+  expect(readFileSync(alias, 'utf8')).toBe('foreign')
+})
+
+it('checks the joining deadline even when the timer phase has not run', async () => {
+  const file = join(root, 'hooks'); writeFileSync(file, 'old')
+  let finish!: (value: boolean) => void
+  const work = new Promise<boolean>(resolve => { finish = resolve })
+  const original = runHookPreparation([file], () => work, { identity: 'same' })
+  const joined = runHookPreparation([file], async () => true, { identity: 'same', timeoutMs: 5 }).catch(error => error)
+  await drain()
+  const now = vi.spyOn(performance, 'now').mockReturnValue(10)
+  finish(true)
+  expect(await original).toBe(true)
+  expect((await joined).message).toMatch(/deadline/)
+  now.mockRestore()
+})
+
+it('retains the joining caller’s alias in its final launch proof', async () => {
+  const file = join(root, 'hooks'), alias = join(root, 'alias'), other = join(root, 'other')
+  writeFileSync(file, 'old'); writeFileSync(other, 'foreign'); symlinkSync(file, alias)
+  const original = runHookPreparation([file], attempt => inspectHookFile(file).replace('ready', attempt), { identity: 'same' })
+  await drain()
+  const confirmed = vi.fn()
+  const joined = runHookPreparation([alias], async () => true, { identity: 'same', confirmed })
+  await release(); await original; await joined
+  const proof = confirmed.mock.calls[0]![0]
+  expect(proof.files[0].file).toBe(alias)
+  expect(proof.current()).toBe(true)
+  unlinkSync(alias); symlinkSync(other, alias)
+  expect(proof.current()).toBe(false)
+})

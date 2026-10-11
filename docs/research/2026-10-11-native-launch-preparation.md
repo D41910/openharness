@@ -1,9 +1,9 @@
 # Native launch preparation
 
-Status: implementation in progress. This completes group 2 of the
-[daemon core checklist](2026-10-09-daemon-core-completion.md); it is not a claim
-that the whole launch boundary or the daemon refactor is finished. No release
-is authorized.
+Status: hook durability mechanics are in final validation. They are part of
+group 2 of the [daemon core checklist](2026-10-09-daemon-core-completion.md).
+The whole-launch integration below remains in progress in a separate worktree;
+neither group 2 nor the daemon refactor is complete. No release is authorized.
 
 The healthy OpenCode v1 → v2 → v1 → current behavior was recorded from main
 `10adc628d` in its own commit, `d5d796623`. Its fixture remains unchanged.
@@ -84,7 +84,7 @@ during those waits; callback gaps measure that distinction, not actual Stop late
 Whole-launch cost, readiness, and unrelated Stop latency still require integration
 measurement. There is no cross-request configuration or durability cache.
 
-## Remaining integration for this change
+## Remaining launch integration
 
 Every create/fork/restart/retarget/restore/external-resume path must use a confirmed
 snapshot for permission probing, versioned choices, hooks, native APIs, and argv.
@@ -97,7 +97,8 @@ A held operation against a running pane must preserve the live row and process;
 only inert panes may use the existing held-launch state. Startup hook coordination
 must stop waiting for disk work only when these per-launch checks are wired.
 Retries must preserve the original request and ownership, work independently, and
-be revoked by Stop/Close. These caller migrations remain unfinished in this draft.
+be revoked by Stop/Close. These caller migrations remain unfinished; the mechanics
+PR does not enable the draft whole-launch integration.
 
 ## Time accounting
 
@@ -127,3 +128,19 @@ The matched three-pair measurement reported median baseline/candidate totals of
 maximum timer gaps were 11.5/59.2 ms. These results show the extra durability cost;
 they do not prove native-read latency under a stalled filesystem. Final acceptance
 will measure that separately after launch integration.
+
+Review of `ace259746` found four additional gaps: a joining deadline could pass
+before its timer callback, an alias join could acknowledge a different route,
+OpenCode could credit a newer installation to a revoked older caller, and shell
+globs/newlines could cause a foreign command to be mistaken for an owned hook.
+The corrections have regressions. Each confirmed publication also retains its
+exact file and alias facts for the later launch guard; an alias join retains its
+own route. The OpenCode follow deadline includes the original preparation.
+
+The integration worktree's 00:33 UTC receipt passed typecheck and focused hooks
+and launch tests. A later expanded run exposed a local type annotation error in
+the unfinished held-launch integration and one native-process fixture failure
+under load; the isolated native-version rerun passed all eleven tests without a
+production change. These are development evidence, not the final mechanics gate.
+The mechanics branch integrates main `93d49e9c8` (routing changes only) and runs
+its own final gates, independent review, mutations and private e2e lanes.

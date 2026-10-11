@@ -283,3 +283,30 @@ it('does not join hook preparation across a managed Node command change', async 
   expect(readFileSync(file, 'utf8')).toContain('/fixture/node-after')
   expect(readFileSync(file, 'utf8')).not.toContain('/fixture/node-before')
 })
+
+
+it.each([
+  'node /foreign/*/notify.mjs --port 42 --data-dir /foreign',
+  'node /foreign/notify.mjs\n--port 42 --data-dir /foreign',
+  'node /foreign/notify.mjs --port 42 --data-dir /foreign?path',
+])('preserves a foreign shell command during hook preparation: %s', async command => {
+  const { root } = await fixture()
+  const { engineHooks } = await import('./hooks.js')
+  const home = join(root, 'HOME'), file = join(home, 'settings.json')
+  const foreign = { hooks: [{ type: 'command', command }] }
+  writeFileSync(file, JSON.stringify({ hooks: { SessionStart: [foreign] } }))
+  expect(await engineHooks.claude.installIn(4242, home)).toBe(true)
+  expect(JSON.parse(readFileSync(file, 'utf8')).hooks.SessionStart[0]).toEqual(foreign)
+})
+
+
+it('does not credit a newer OpenCode installation to a revoked older caller', async () => {
+  const { install } = await fixture()
+  const control = await import('./launchControl.js')
+  let release!: (major: number) => void, current = true
+  vi.spyOn(control, 'opencodeMajorVersion').mockImplementationOnce(() => new Promise(resolve => { release = resolve }))
+  const first = install(4242, undefined, { current: () => current })
+  expect(await install(4242)).toBe(true)
+  current = false; release(1)
+  expect(await first).toBe(false)
+})

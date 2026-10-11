@@ -12,6 +12,10 @@ export class HookPreparationHeld extends Error {
 const version = (info: BigIntStats) => `${info.dev}:${info.ino}:${info.uid}:${info.mode}:${info.size}:${info.mtimeNs}:${info.ctimeNs}`
 const fileIdentity = (info: BigIntStats) => `${info.dev}:${info.ino}:${info.uid}:${info.mode}`
 export interface HookFilePublication { verify(): void }
+export interface HookPreparationProof {
+  files: readonly { file: string; target: string; stamp: string | null; facts: ReturnType<NativePaths['snapshot']> }[]
+  current(): boolean
+}
 const MAX_BYTES = 1024 * 1024
 const missing = (error: unknown) => (error as NodeJS.ErrnoException).code === 'ENOENT'
 
@@ -230,9 +234,26 @@ export interface HookPreparationOptions {
   identity?: string
   current?(): boolean
   timeoutMs?: number
+  /** Evidence retained by this launch; never a global success cache. */
+  confirmed?(proof: HookPreparationProof): void
 }
-interface PendingPreparation { identity?: string; keys: string[]; revoke(): void; reply: Promise<unknown>; waiters: number }
-async function joinPreparation<T>(pending: PendingPreparation, options: HookPreparationOptions): Promise<T> {
+interface PendingPreparation { identity?: string; keys: string[]; revoke(): void; reply: Promise<unknown>; waiters: number; proof?: HookPreparationProof }
+function preparationProof(files: readonly string[], verifyRoutes: () => void): HookPreparationProof {
+  verifyRoutes()
+  const confirmed = files.map(file => {
+    const paths = new NativePaths(new NativeEvidenceBudget(250)), located = paths.resolveSync(file, true)
+    const observed = inspectHookFile(file)
+    return { file, target: located?.path ?? join(directoryPath(dirname(file)), basename(file)), stamp: observed.stamp, facts: paths.snapshot(), verify: observed.verify }
+  })
+  const proof = { files: confirmed.map(({ verify: _verify, ...file }) => file), current: () => {
+    try { verifyRoutes(); for (const file of confirmed) file.verify(); return true } catch { return false }
+  } }
+  if (!proof.current()) throw new HookPreparationHeld('the prepared settings changed before acknowledgement')
+  return proof
+}
+async function joinPreparation<T>(pending: PendingPreparation, options: HookPreparationOptions, verifyRoutes: () => void, files: readonly string[]): Promise<T> {
+  const deadline = performance.now() + (options.timeoutMs ?? 5_000)
+  verifyRoutes()
   if (options.current?.() === false) throw new HookPreparationHeld('the joining owner changed')
   if (pending.waiters >= 16) throw new HookPreparationHeld('the preparation waiters are occupied')
   pending.waiters++
@@ -241,7 +262,14 @@ async function joinPreparation<T>(pending: PendingPreparation, options: HookPrep
     const result = await Promise.race([pending.reply, new Promise<never>((_, reject) => {
       timer = setTimeout(() => reject(new HookPreparationHeld('the joining preparation exceeded its deadline')), options.timeoutMs ?? 5_000)
     })])
+    verifyRoutes()
+    if (pending.proof && !pending.proof.current()) throw new HookPreparationHeld('the prepared settings changed before acknowledgement')
+    // Joining shares the publication, not the caller's aliases. Retain this
+    // caller's route all the way through the final pane guard.
+    const proof = preparationProof(files, verifyRoutes)
+    if (performance.now() >= deadline) throw new HookPreparationHeld('the joining preparation exceeded its deadline')
     if (options.current?.() === false) throw new HookPreparationHeld('the joining owner changed')
+    options.confirmed?.(proof)
     return result as T
   } finally { clearTimeout(timer); pending.waiters-- }
 }
@@ -287,7 +315,7 @@ export async function runHookPreparation<T>(files: readonly string[], work: (att
   if (conflicts.length) {
     const same = conflicts.length === 1 && options.identity !== undefined && conflicts[0].identity === options.identity
       && JSON.stringify(conflicts[0].keys) === JSON.stringify(keys)
-    if (same) return await joinPreparation<T>(conflicts[0], options)
+    if (same) return await joinPreparation<T>(conflicts[0], options, verifyRoutes, files)
     for (const pending of conflicts) pending.revoke()
     throw new HookPreparationHeld('another preparation still owns these destinations')
   }
@@ -338,7 +366,13 @@ export async function runHookPreparation<T>(files: readonly string[], work: (att
     verify()
     for (const file of files) observations.set(file, inspectHookFile(file).verify)
     return work(attempt)
-  }).then(result => { verify(); return result }).finally(() => {
+  }).then(result => {
+    verify()
+    pending.proof = preparationProof(files, verifyRoutes)
+    check()
+    options.confirmed?.(pending.proof)
+    return result
+  }).finally(() => {
     pendingPreparations.delete(pending)
     clearTimeout(timer)
   })

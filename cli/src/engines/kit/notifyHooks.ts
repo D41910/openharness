@@ -81,11 +81,12 @@ export function isManagedHookCommand(value: unknown): boolean {
     }
     if (char === "'" || char === '"') { quote = char; active = true; continue }
     if (char === '\\') {
-      if (++index === value.length) return false
+      if (++index === value.length || /[\r\n]/.test(value[index])) return false
       word += value[index]; active = true; continue
     }
-    if (/\s/.test(char)) { if (active) { args.push(word); word = ''; active = false }; continue }
-    if (/[;&|<>$`()]/.test(char)) return false
+    if (/[\r\n]/.test(char)) return false
+    if (/[ \t]/.test(char)) { if (active) { args.push(word); word = ''; active = false }; continue }
+    if (/[;&|<>$`(){}*?\[\]~#]/.test(char)) return false
     word += char; active = true
   }
   if (quote) return false

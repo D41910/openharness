@@ -1,6 +1,6 @@
 /** Native hook installation is eager. Optional transcript and screen readers own no hook files. */
 import { join } from 'node:path'
-import { runHookPreparation, type HookPreparationOptions } from './kit/nativeHookFiles.js'
+import { runHookPreparation, type HookPreparationOptions, type HookPreparationProof } from './kit/nativeHookFiles.js'
 import { env } from '../config/env.js'
 import { VERSION } from '../version.js'
 import { OPENCODE_LEGACY_PLUGIN, OPENCODE_TUI_PLUGIN, OPENCODE_LEGACY_REMOVAL, OPENCODE_VERSION } from './opencode/contract.js'
@@ -37,10 +37,11 @@ export const installHermesHooks = (port: number, selectedHome?: string, options?
   installNativeYamlHooks(HERMES_HOOK_SETTINGS, home => command(port, 'hermes', env.CODEX_HOME, home), selectedHome, options)
 
 /** Install both discovery surfaces for v1; v2 must not load our incompatible v1 export. */
-interface OpencodeInstallation { port: number; executable?: string; major?: number | null; done: Promise<boolean> }
+interface OpencodeInstallation { port: number; executable?: string; major?: number | null; done: Promise<boolean>; proofs: HookPreparationProof[] }
 let opencodeInstallation: OpencodeInstallation | undefined
 export async function installOpencodePlugin(port: number, snapshot?: OpencodeLaunchSnapshot, options: HookPreparationOptions = {}): Promise<boolean> {
-  const installation: OpencodeInstallation = { port, executable: snapshot?.identity, done: Promise.resolve(false) }
+  const deadline = performance.now() + (options.timeoutMs ?? OPENCODE_VERSION.timeoutMs)
+  const installation: OpencodeInstallation = { port, executable: snapshot?.identity, done: Promise.resolve(false), proofs: [] }
   opencodeInstallation = installation
   installation.done = (async () => {
     const values = pluginValues(port)
@@ -59,7 +60,7 @@ export async function installOpencodePlugin(port: number, snapshot?: OpencodeLau
       const removedOrInstalled = await legacy.commit(attempt), installed = await tui.commit(attempt)
       removedOrInstalled.verify(); installed.verify()
       return snapshot?.current() !== false
-    }, { ...options, identity: JSON.stringify([port, snapshot?.identity, major]),
+    }, { ...options, timeoutMs: Math.max(0, deadline - performance.now()), confirmed: proof => installation.proofs.push(proof), identity: JSON.stringify([port, snapshot?.identity, major]),
       current: () => opencodeInstallation?.port === port && opencodeInstallation.executable === installation.executable
         && opencodeInstallation.major === major && snapshot?.current() !== false && options.current?.() !== false }) } catch (error) {
       console.error('[hooks] OpenCode preparation held:', error)
@@ -67,14 +68,13 @@ export async function installOpencodePlugin(port: number, snapshot?: OpencodeLau
     }
   })()
   let current = installation, installed = await current.done
-  const deadline = performance.now() + OPENCODE_VERSION.timeoutMs
   while (current !== opencodeInstallation) {
     current = opencodeInstallation!
     // Two healthy creates must not fail merely because they overlap. Follow the
     // current installation without restoring an obsolete request's write rights.
     // A port change or continuing churn cannot make this caller wait forever.
     const remaining = deadline - performance.now()
-    if (current.port !== port || current.executable !== installation.executable || snapshot?.current() === false || remaining <= 0) return false
+    if (current.port !== port || current.executable !== installation.executable || snapshot?.current() === false || options.current?.() === false || remaining <= 0) return false
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
       const result = await Promise.race([current.done, new Promise<'timeout'>(done => {
@@ -84,5 +84,7 @@ export async function installOpencodePlugin(port: number, snapshot?: OpencodeLau
       installed = result
     } finally { clearTimeout(timer) }
   }
-  return installed
+  if (!installed || performance.now() >= deadline || options.current?.() === false || snapshot?.current() === false || current.proofs.some(proof => !proof.current())) return false
+  for (const proof of current.proofs) options.confirmed?.(proof)
+  return true
 }
