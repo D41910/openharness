@@ -1781,6 +1781,9 @@ async function runForeground(session: AuthSession | null): Promise<void> {
     // route and hears about everyone else's edits as `desk_changed` (backendSocket.ts).
     onDeskRead: () => proxyBackend('GET', '/api/desk'),
     onDeskOps: (body) => proxyBackend('POST', '/api/desk/ops', body),
+    // Which tabs have Agent Messages on, for the window's tabs (backend routes/agentMessages.ts).
+    onAgentMessagesRead: () => proxyBackend('GET', '/api/agent-messages'),
+    onAgentMessagesWrite: (tabId, body) => proxyBackend('PATCH', `/api/agent-messages/tabs/${tabId}`, body),
     onExperimentalRead: () => proxyBackend('GET', '/api/experimental-settings'),
     onExperimentalWrite: (body) => proxyBackend('PATCH', '/api/experimental-settings', body),
     onStore: (method, path, body) => proxyBackend(method, path, body),

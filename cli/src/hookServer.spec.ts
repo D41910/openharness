@@ -316,6 +316,31 @@ describe('the desk proxy', () => {
   })
 })
 
+describe('the Agent Messages proxy', () => {
+  it('reads which tabs have Agent Messages on ungated, and sets one tab only with the local header', async () => {
+    const write = vi.fn(async (tabId: string, body: unknown) => ({ status: 200, body: { success: true, data: { tabId, echo: body } } }))
+    const { base } = await start({
+      onAgentMessagesRead: async () => ({ status: 200, body: { success: true, data: { revision: 1, machines: [], tabs: [] } } }),
+      onAgentMessagesWrite: write,
+    })
+    expect(await (await fetch(`${base}/api/agent-messages`)).json()).toEqual({ success: true, data: { revision: 1, machines: [], tabs: [] } })
+    const patch = (path: string, body: string, local = true) => fetch(`${base}${path}`, { method: 'PATCH', headers: { 'content-type': 'application/json', ...(local ? { 'x-adapter-local': '1' } : {}) }, body })
+    expect((await patch('/api/agent-messages/tabs/app', '{"enabled":true}', false)).status).toBe(403)
+    expect(write).not.toHaveBeenCalled()
+    const saved = await patch('/api/agent-messages/tabs/app', '{"enabled":true}')
+    expect(((await saved.json()) as { data: unknown }).data).toEqual({ tabId: 'app', echo: { enabled: true } })
+    expect(write).toHaveBeenCalledExactlyOnceWith('app', { enabled: true })
+    expect((await patch('/api/agent-messages/tabs/app', '{nope')).status).toBe(400)
+    expect((await patch('/api/agent-messages/tabs/bad.tab', '{}')).status).toBe(404)
+  })
+
+  it('answers UNAVAILABLE where the daemon has no handler for it', async () => {
+    const { base } = await start({})
+    expect((await fetch(`${base}/api/agent-messages`)).status).toBe(503)
+    expect((await fetch(`${base}/api/agent-messages/tabs/app`, { method: 'PATCH', headers: { 'content-type': 'application/json', 'x-adapter-local': '1' }, body: '{}' })).status).toBe(503)
+  })
+})
+
 describe('account Experimental settings proxy', () => {
   it('reads through the account proxy and guards writes with the local header', async () => {
     const snapshot = { accountId: 'owner', revision: 0, features: { focus_bar_creature: false, share_button: false } }
