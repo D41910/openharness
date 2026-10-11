@@ -84,7 +84,7 @@ const PROBES: Record<string, { type: string; payload: Record<string, unknown> }>
   models: { type: 'models_list', payload: {} },
   devices: { type: 'harness_devices_list', payload: {} },
   orchestrator: { type: 'orchestrator', payload: { action: 'list' } },
-  teams: { type: 'team', payload: { action: 'capabilities' } },
+  teams: { type: 'agent_messages', payload: { action: 'history' } },
 }
 /** The service names a process's comings and goings are logged under (`[services] <name> connected`). */
 const LINKS: Record<string, string> = { 'engine-claude': 'engine-claude', 'engine-codex': 'engine-codex', search: 'search', viewers: 'viewers', edge: 'monitor', gateway: 'gateway', models: 'models', devices: 'devices', orchestrator: 'orchestrator', teams: 'teams', sharing: 'sharing' }

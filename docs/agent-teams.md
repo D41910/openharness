@@ -1,5 +1,7 @@
 # Agent teams
 
+> **Replaced** on October 10, 2026 by [Agent Messages](design/2026-10-10-agent-messages.md): `harness send` between harnesses in a tab. Kept as the record of Swarm collaboration; `harness team` and `harness channel` no longer exist.
+
 Implementation and operating guide, September 27, 2026. Verification limits are recorded below.
 
 ## Default experience: swarm tabs

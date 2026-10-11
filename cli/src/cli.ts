@@ -136,8 +136,8 @@ Machine:
   harness machines             list the machines on this account (this computer's is marked)
   harness search <words>       find the conversation on this computer that said them: every turn of
                                every harness, live or stopped (--limit=N, --json)
-  harness channel --help       consult agents in a swarm and read shared collaboration history
-  harness team --help          advanced team commands and correlated agent replies
+  harness send <name> "text"   from an agent's pane: message a teammate in this tab, when Agent Messages
+                               are on there (⇄ on the tab); \`harness send\` alone lists who is here
   harness machines delete <id> remove ANOTHER machine (refuses this one; use \`harness logout\`)
   harness remote               from a Harness terminal tile: open a terminal on another of your machines and move this tile to it
   harness version              print the installed version (v${VERSION})
@@ -2442,8 +2442,7 @@ async function logsExportCommand(json: boolean): Promise<void> {
 }
 
 import { orchestratorCommand } from './orchestrator/command.js'
-import { teamCommand } from './teams/command.js'
-import { channelCommand } from './teams/channelCommand.js'
+import { sendCommand } from './messages/command.js'
 
 // ── arg parse ──────────────────────────────────────────────────────────────────────────────────
 // `hn` is the terminal client's short name (like tmux, fzf): the same CLI, entered at `tui`. A call
@@ -2472,11 +2471,8 @@ if (cmd === 'version' || cmd === '--version' || cmd === '-v') { console.log(VERS
 
 
 switch (cmd) {
-  case 'team':
-    teamCommand(rest).then(code => { process.exitCode = code }).catch(onError)
-    break
-  case 'channel':
-    channelCommand(rest).then(code => { process.exitCode = code }).catch(onError)
+  case 'send':
+    sendCommand(rest).then(code => { process.exitCode = code }).catch(onError)
     break
   case 'orchestrator':
     orchestratorCommand(rest).then(code => { process.exitCode = code }).catch(onError)

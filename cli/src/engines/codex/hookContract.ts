@@ -13,6 +13,8 @@ export const hooks: HookContract = {
     file: 'hooks.json',
     events: [{ event: 'SessionStart', matcher: 'startup|resume|clear|compact' }, { event: 'UserPromptSubmit' }],
     timeout: 5,
+    // Agent Messages: a teammate's message reaches a working agent at its next tool call (kit/messagesHook.ts).
+    inbox: { event: 'PostToolUse' },
     commandNamesHome: true,
     upToDate: { command: 'first', matcher: true },
     messages: {
@@ -32,7 +34,7 @@ export const hooks: HookContract = {
       file: 'config.toml',
       table: 'hooks.state',
       key: 'trusted_hash',
-      events: { SessionStart: 'session_start', UserPromptSubmit: 'user_prompt_submit' },
+      events: { SessionStart: 'session_start', UserPromptSubmit: 'user_prompt_submit', PostToolUse: 'post_tool_use' },
       matcherEvents: ['SessionStart'],
       defaultTimeout: 600,
       messages: {

@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto'
 import { StringDecoder } from 'node:string_decoder'
-import { channelTeamId } from './service.js'
+
+/** A tab's swarm id, as Swarm collaboration named it (its service is gone; the core still records scopes). */
+export const channelTeamId = (tabId: string): string => createHash('sha256').update(`harness-channel-v1:${tabId}`).digest('hex').slice(0, 32)
 
 const LIMIT = 64
 const TTL = 5 * 60_000

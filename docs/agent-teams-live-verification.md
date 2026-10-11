@@ -1,5 +1,7 @@
 # Native Team verification — September 27, 2026
 
+> **Replaced** on October 10, 2026 by [Agent Messages](design/2026-10-10-agent-messages.md): `harness send` between harnesses in a tab. Kept as the record of Swarm collaboration; `harness team` and `harness channel` no longer exist.
+
 Status: **The complete Claude → Codex/Grok → Claude acceptance passed.** Grok's login was
 renewed by the user before the full run. The fixture exited successfully and recorded
 `passed: true` and `fullAcceptance: true`.

@@ -42,6 +42,12 @@ export interface HookSettings {
   events: ReadonlyArray<{ event: string; matcher?: string }>
   /** Seconds the engine gives the hook. */
   timeout: number
+  /**
+   * Agent Messages' own block (kit/messagesHook.ts), apart from notify.mjs's: at this event the waiting messages
+   * of the agent's pane become the model's context. One block, for every tool, in the person's settings beside
+   * the others; absent for an engine with no such event.
+   */
+  inbox?: { event: string }
   /** The command names this home as the engine's (`--codex-home`): a profile's sessions are in its own store. */
   commandNamesHome: boolean
   /**

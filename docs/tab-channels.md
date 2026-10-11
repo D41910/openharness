@@ -1,5 +1,7 @@
 # Swarm collaboration
 
+> **Replaced** on October 10, 2026 by [Agent Messages](design/2026-10-10-agent-messages.md): `harness send` between harnesses in a tab. Kept as the record of Swarm collaboration; `harness team` and `harness channel` no longer exist.
+
 September 28, 2026. This is the experimental A2A experience, off by default; the underlying
 [team protocol](agent-teams.md) also remains available through the CLI.
 

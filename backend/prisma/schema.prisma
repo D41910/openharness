@@ -763,6 +763,22 @@ model TabChannel {
   @@map("tab_channels")
 }
 
+/// Agent Messages, per tab (docs/design/2026-10-10-agent-messages.md): whether the harnesses in one desk tab
+/// may message each other. Absence means off. Kept beside the desk, never in its tab JSON: a backend pod that
+/// has not upgraded drops a tab whose JSON it does not know (lib/desk.ts parseTabs). A deterministic _id makes
+/// a concurrent first write converge.
+model AgentMessageTab {
+  id        String   @id @map("_id") @db.ObjectId
+  userId    String
+  tabId     String
+  enabled   Boolean  @default(false)
+  revision  Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@map("agent_message_tabs")
+}
+
 /// Explicit account opt-in for automatic swarm collaboration; absence means off.
 model TabChannelSettings {
   id        String  @id @map("_id") @db.ObjectId

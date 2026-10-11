@@ -1,18 +1,12 @@
 /**
- * Tab collaboration and teams in the teams' own process (`harness __service teams,collaboration`), beside the
- * prompt scopes (services/teamsProcess.ts): an experiment, started only once it is on (core/api.ts
- * `EXPERIMENTS`). The same service as in the core's process (services/collaboration.ts), on the core's API as
- * a process reaches it (services/processCoreApi.ts), and what a mailbox in another process needs besides:
- * - The prompt scopes it reads are the core's word on them (`team_scope`, `team_replied`, core/teamsLink.ts),
- *   never the scopes beside it, which may not yet have a change the core already made: no team, never a wrong
- *   one, as when they answered in the core's process.
- * - The core asks in line, as it writes a team's turn, whether that turn may still be written. This process
- *   tells the core which may (`writable`), before each is handed over and whenever that can change, each for a
- *   few seconds at a time: a process that stops telling, hung or gone, leaves none writable, and a team's turn
- *   waits rather than being written against its mailbox's word.
- * - Its mailbox reads in line whether a turn was taken back. Before a cancel or a hold this process asks the
- *   core, which takes it back if it can (`takingBack`), and the mailbox reads that answer; one it takes back on
- *   its own (as the channels are switched off) is not taken back here, and waits unwritten instead.
+ * Agent Messages in the teams' own process (`harness __service teams,collaboration`): an experiment, started only
+ * once it is on (core/api.ts `EXPERIMENTS`). The same service as in the core's process (services/collaboration.ts,
+ * messages/service.ts), on the core's API as a process reaches it (services/processCoreApi.ts), and what a mailbox
+ * in another process needs besides:
+ * - The core asks in line, as it writes a typed delivery, whether it may still be written. This process tells the
+ *   core which may (`writable`), before each is handed over and whenever that can change, each for a few seconds
+ *   at a time: a process that stops telling, hung or gone, leaves none writable, and a delivery waits rather than
+ *   being written against its mailbox's word.
  * - The agents it reads as the apps are shown them, asked again as each request starts and whenever its
  *   mailbox reads them and they are a second old.
  */
@@ -77,8 +71,6 @@ export function runCollaborationService(options: CollaborationServiceOptions): S
   }
 
   const noticeListeners = new Set<(notice: BackendNotice) => void>()
-  /** What the core said each delivery taken back came to, for the mailbox to read in line. */
-  const takenBack = new Map<string, boolean>()
   /** The deliveries handed to the core, newest last: those whose writing this process watches. */
   const handed = new Set<string>()
   let told = ''
@@ -102,20 +94,11 @@ export function runCollaborationService(options: CollaborationServiceOptions): S
         tell()
         base.turns.deliver(agentId, text, deliveryId)
       },
-      cancelDelivery: (deliveryId: string) => takenBack.get(deliveryId) ?? false,
+      // Nothing is taken back in line here: a delivery the mailbox no longer wants is refused by `writable`.
+      cancelDelivery: () => false,
     },
   }
-  const build = () => (options.start ?? startCollaboration)(api, {
-    scopes: {
-      current: (agentId) => ask('team_scope', { agentId }).then((answer) => (typeof answer.teamId === 'string' ? answer.teamId : null), () => null),
-      replied: (agentId, teamId, questionId) => ask('team_replied', { agentId, teamId, questionId }).catch(() => ({})),
-    },
-    takingBack: async (deliveryId) => {
-      takenBack.set(deliveryId, await deliveries.cancel(deliveryId))
-      return () => { takenBack.delete(deliveryId) }
-    },
-    changed: () => tell(),
-  })
+  const build = () => (options.start ?? startCollaboration)(api, { dataDir: options.dataDir, changed: () => tell() })
   let collaboration = build()
   /** The machine the running service was started under, and whether it was. */
   let builtFor: string | null = null
@@ -160,8 +143,7 @@ export function runCollaborationService(options: CollaborationServiceOptions): S
     machineId: options.machineId,
     token: options.token,
     requests: {
-      team: async (payload, asker) => { await ready(); return current().requests.team(payload, asker) },
-      team_delivery: async (payload, asker) => { await ready(); return current().requests.team_delivery(payload, asker) },
+      agent_messages: async (payload, asker, closed) => { await ready(); return current().requests.agent_messages(payload, asker, closed) },
     },
     onEvent: (payload) => {
       if (deliveries.heard(payload)) { tell(); return }

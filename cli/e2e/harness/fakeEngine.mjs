@@ -72,8 +72,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
  * as the CLI has no such moment to run it at.
  */
 const HOOK_EVENTS = {
-  claude: new Set(['SessionStart', 'UserPromptSubmit', 'Stop', 'StopFailure', 'SessionEnd']),
-  codex: new Set(['SessionStart', 'UserPromptSubmit']),
+  // PostToolUse: Agent Messages' hook (engines/kit/messagesHook.ts), run after each tool of the `!work` directive.
+  claude: new Set(['SessionStart', 'UserPromptSubmit', 'Stop', 'StopFailure', 'SessionEnd', 'PostToolUse']),
+  codex: new Set(['SessionStart', 'UserPromptSubmit', 'PostToolUse']),
 }
 
 /** Inside `root`, or `root` itself. */
@@ -408,13 +409,16 @@ export async function run(engine, config = {}, { native = false } = {}) {
     const env = engine === 'claude' ? { ...process.env, CLAUDE_PROJECT_DIR: cwd } : process.env
     let child
     try {
-      child = spawn('/bin/sh', ['-c', command], { cwd, env, stdio: ['pipe', 'ignore', 'pipe'] })
+      // What a PostToolUse hook prints is read, as both CLIs read it: its additionalContext reaches the model.
+      child = spawn('/bin/sh', ['-c', command], { cwd, env, stdio: ['pipe', event === 'PostToolUse' ? 'pipe' : 'ignore', 'pipe'] })
     } catch (error) {
       hookLog(`${what} could not start: ${error?.message ?? error}`)
       done()
       return
     }
-    let stderr = ''
+    let stderr = '', stdout = ''
+    child.stdout?.setEncoding('utf8')
+    child.stdout?.on('data', (chunk) => { if (stdout.length < 70_000) stdout += chunk })
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', (chunk) => { if (stderr.length < 2_000) stderr += chunk })
     const limit = (Number(timeoutSeconds) > 0 ? Number(timeoutSeconds) : 60) * 1000
@@ -430,6 +434,16 @@ export async function run(engine, config = {}, { native = false } = {}) {
       clearTimeout(timer)
       hookLog(`${what} ${killed ? 'ended after it was killed' : 'ran'} in ${Date.now() - started} ms · exit=${code ?? signal}`
         + (stderr.trim() ? ` · stderr=${JSON.stringify(stderr.trim().slice(0, 500))}` : ''))
+      if (stdout.trim()) {
+        let context = null
+        try { context = JSON.parse(stdout).hookSpecificOutput?.additionalContext ?? null } catch { /* not JSON: the CLIs ignore it here */ }
+        if (typeof context === 'string') {
+          hookLog(`${event} context=${JSON.stringify(context)}`)
+          // Where each CLI puts it: Claude Code an attachment on the tool's turn, Codex developer context.
+          if (engine === 'claude') claude({ type: 'attachment', attachment: { type: 'hook_additional_context', hookName: event, content: [context] } })
+          else codex('response_item', { type: 'message', role: 'developer', content: [{ type: 'input_text', text: context }] })
+        }
+      }
       done()
     })
     child.stdin.on('error', () => { /* a hook that exits without reading its input */ })
@@ -1471,6 +1485,22 @@ export async function run(engine, config = {}, { native = false } = {}) {
       bottom = directive[2] === 'scrollback' ? pagerBottom(prompt, `answer ${turn}: ${prompt}`) : browsingBottom
       await finish(`answer ${turn}: ${prompt}`)
       return
+    }
+    if (directive?.[1] === 'work') {
+      // A long turn of tool calls, one a second, each followed by its PostToolUse hooks: how a working agent hears
+      // Agent Messages (engines/kit/messagesHook.ts) without a keystroke reaching its pane.
+      for (let step = 1; step <= (Number(directive[2]) || 5); step++) {
+        const id = `call_${turn}_${step}`
+        if (engine === 'claude') {
+          claude({ type: 'assistant', message: { id: `msg_${turn}_w${step}`, role: 'assistant', model: claudeModel, content: [{ type: 'tool_use', id, name: 'Bash', input: { command: `step ${step}` } }], stop_reason: 'tool_use' } })
+          claude({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: `ran step ${step}` }] } })
+        } else {
+          codex('response_item', { type: 'function_call', call_id: id, name: 'exec_command', arguments: JSON.stringify({ cmd: `step ${step}` }) })
+          codex('response_item', { type: 'function_call_output', call_id: id, output: `ran step ${step}` })
+        }
+        await runHooks('PostToolUse', { tool_name: 'Bash', tool_input: { command: `step ${step}` }, tool_use_id: id })
+        await new Promise((resolve) => setTimeout(resolve, 1000))
+      }
     }
     if (directive?.[1] === 'slow') await new Promise((resolve) => setTimeout(resolve, Number(directive[2]) || 1000))
     await finish(`answer ${turn}: ${prompt}`)

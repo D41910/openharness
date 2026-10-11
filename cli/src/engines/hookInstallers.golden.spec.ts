@@ -220,6 +220,9 @@ function snapshot(): Record<string, Entry> {
     try { names = readdirSync(dir).sort() } catch { return }
     for (const name of names) {
       const path = join(dir, name)
+      // Agent Messages' hook script (engines/kit/messagesHook.ts), written beside the settings by the same install:
+      // its own spec proves it; recorded here it would repeat the whole script in every case.
+      if (relative(root, path) === join('home', '.harness', 'agent-messages')) continue
       const stat = lstatSync(path)
       const key = normalize(relative(root, path))
       if (stat.isSymbolicLink()) files[key] = { type: 'link', target: normalize(readlinkSync(path)) }
@@ -316,6 +319,11 @@ beforeAll(async () => {
       for (const timeout of [5, 30]) hashes.push([reviewHash(codex.settings.reviewed!, event, matcher, { command: cmd, timeout }), `<hash ${event} ${token.slice(1, -1)}${timeout === 5 ? '' : ` timeout ${timeout}`}>`])
     }
   }
+  // Agent Messages' block (kit/messagesHook.ts), the same command in every case: its command and Codex's hash of it.
+  const { messagesCommand } = await import('./kit/messagesHook.js')
+  const messages = messagesCommand(join(root, 'home', '.harness', 'agent-messages'))
+  for (const timeout of [5, 30]) hashes.push([reviewHash(codex.settings.reviewed!, 'PostToolUse', undefined, { command: messages, timeout }), `<hash PostToolUse messages${timeout === 5 ? '' : ` timeout ${timeout}`}>`])
+  hashes.push([messages, '<messages command>'])
   // The real path first: on macOS the temporary folder is reached through /var, and Codex keys by /private/var.
   tokens = [...hashes, ...commands, [notify.HOOK_SCRIPT, '<script>'], [process.execPath, '<node>'], [realpathSync(root), '<root>'], [root, '<root>'], [`.${process.pid}.`, '.<pid>.']]
 })

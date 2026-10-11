@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
-import { teamWriteHold } from './preflight.js'
-import { CLAUDE_REWIND_CONFIRM, CLAUDE_REWIND_EMPTY, CLAUDE_REWIND_LIST, CODEX_BROWSING_SCROLLBACK } from '../lib/__fixtures__/rewindPickers.js'
+import { teamWriteHold } from './teamWriteHold.js'
+import { CLAUDE_REWIND_CONFIRM, CLAUDE_REWIND_EMPTY, CLAUDE_REWIND_LIST, CODEX_BROWSING_SCROLLBACK } from './__fixtures__/rewindPickers.js'
 
 it('holds multiline drafts with an empty first line', () => {
   expect(teamWriteHold('claude', '────────────\n❯\n  a human draft\n────────────\n  ? for shortcuts')).toBe('team_waiting_draft')

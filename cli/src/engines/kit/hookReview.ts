@@ -19,7 +19,11 @@ import { createHash } from 'node:crypto'
 import { basename, join } from 'node:path'
 import type { HookReviewRecord } from '../facets/hooks.js'
 import { HookPreparationHeld, inspectHookFile, runHookPreparation, type HookPreparationAttempt } from './nativeHookFiles.js'
-import { isOurs, type Settings } from './notifyHooks.js'
+import { isMessagesBlock } from './messagesHook.js'
+import { isOurs, type HookBlock, type Settings } from './notifyHooks.js'
+
+/** Harness's own: notify.mjs's blocks, and Agent Messages' (kit/messagesHook.ts). */
+const harnessOwn = (block: HookBlock): boolean => isOurs(block) || isMessagesBlock(block)
 
 /** Every object's keys sorted, as the engine sorts them before it hashes. */
 function sortedKeys(value: unknown): unknown {
@@ -46,10 +50,10 @@ export function reviewRecords(record: HookReviewRecord, settingsFile: string, se
   for (const [event, label] of Object.entries(record.events)) {
     const blocks = settings.hooks?.[event]
     if (!Array.isArray(blocks)) continue
-    const blockIndex = blocks.findIndex(isOurs)
+    const blockIndex = blocks.findIndex(harnessOwn)
     if (blockIndex < 0) continue
     const block = blocks[blockIndex]
-    const hookIndex = block.hooks.findIndex((hook) => isOurs({ hooks: [hook] }))
+    const hookIndex = block.hooks.findIndex((hook) => harnessOwn({ hooks: [hook] }))
     const hook = block.hooks[hookIndex]
     if (hook.type !== 'command' || typeof hook.command !== 'string') continue
     // A hook edited into a shape Harness does not write is one the engine reads its own way: it asks.

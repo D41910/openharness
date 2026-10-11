@@ -533,9 +533,9 @@ export const SHARE_REQUESTS = [
   'harness_share_comments', 'harness_share_comment_post', 'harness_share_comment_remove',
 ] as const
 
-/** Tab collaboration and teams (services/collaboration.ts): the teams' own requests, from the apps, from `harness team`
- *  in an agent's shell and from the other machines' teams. */
-export const TEAMS_REQUESTS = ['team', 'team_delivery'] as const
+/** Agent Messages (services/collaboration.ts, messages/service.ts), in the slot Tab collaboration had: from
+ *  `harness send` in an agent's pane, from the owner's other machines and from the windows. */
+export const TEAMS_REQUESTS = ['agent_messages'] as const
 
 /**
  * The experiments: services that cost nothing until they are on (docs/design/2026-10-06-core-boundary-next.md,
@@ -552,9 +552,9 @@ export const TEAMS_REQUESTS = ['team', 'team_delivery'] as const
  */
 export const EXPERIMENTS: Readonly<Record<string, { requests: readonly string[]; state: readonly string[] }>> = {
   orchestrator: { requests: ORCHESTRATOR_REQUESTS, state: ['orchestrator/*.json'] },
-  // Tab collaboration and teams, beside the prompt scopes in the teams' process (harnessd/services.ts). Its
-  // ledgers and mailboxes: a team was made here, or another machine's team delivered to an agent here.
-  collaboration: { requests: TEAMS_REQUESTS, state: ['teams'] },
+  // Agent Messages, beside the prompt scopes in the teams' process (harnessd/services.ts). Its history and
+  // waiting deliveries: a message was sent from here or delivered to an agent here.
+  collaboration: { requests: TEAMS_REQUESTS, state: ['agent-messages'] },
   // Its invitations and links: a harness was shared from here.
   sharing: { requests: SHARE_REQUESTS, state: ['harness-shares.json', 'harness-collaboration.json'] },
   // Request-only, on from its first request until the daemon stops: another machine's Memories pane asks, and

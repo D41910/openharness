@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { SwarmPromptScopes } from './promptScope.js'
-import { channelTeamId } from './service.js'
+import { channelTeamId, SwarmPromptScopes } from './promptScope.js'
 
 const agent = 'same-session'
 const a = channelTeamId('swarm-a'), b = channelTeamId('swarm-b')

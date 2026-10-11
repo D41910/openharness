@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { PromptScopes, TeamsEvent } from '../core/api.js'
-import { channelTeamId } from '../teams/service.js'
+import { channelTeamId } from '../teams/promptScope.js'
 import { runServiceProcess, type CoreConnection, type ServiceProcessOptions } from './process.js'
 import { KEPT_UNDOS, runTeamsService } from './teamsProcess.js'
 

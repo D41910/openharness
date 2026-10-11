@@ -10,6 +10,7 @@ import { join } from 'node:path'
 import { env } from '../../config/env.js'
 import type { HookSettings } from '../facets/hooks.js'
 import { prepareReviewed } from './hookReview.js'
+import { isMessagesBlock, messagesCommand, writeMessagesHook } from './messagesHook.js'
 import { command, HOOK_SCRIPT, isOurs, foreignHookBlocks, type Settings } from './notifyHooks.js'
 import { HookPreparationHeld, inspectHookFile, runHookPreparation, type HookPreparationOptions } from './nativeHookFiles.js'
 
@@ -27,6 +28,11 @@ export async function installHookSettings(engine: HookEngine, settings: HookSett
   const say = (line: string): string => line.replace(/\{(file|script|port)\}/g, (_, name: string) =>
     name === 'file' ? file : name === 'script' ? HOOK_SCRIPT : String(port))
   const { messages } = settings
+  // Agent Messages' hook script (kit/messagesHook.ts), which its block below runs: written beside its inboxes,
+  // whatever becomes of the settings file. A failure leaves the block's shell test exiting at once.
+  const inboxRoot = env.HARNESS_AGENT_MESSAGES_DIR
+  const inboxCommand = settings.inbox ? messagesCommand(inboxRoot) : null
+  if (settings.inbox) try { writeMessagesHook(inboxRoot) } catch (err) { console.error('[hooks] could not write the Agent Messages hook script:', err) }
   try { return await runHookPreparation([file, ...(settings.reviewed ? [join(home, settings.reviewed.file)] : [])], async attempt => {
     const observed = inspectHookFile(file)
     const current = (observed.content === null ? {} : JSON.parse(observed.content)) as Settings
@@ -59,6 +65,17 @@ export async function installHookSettings(engine: HookEngine, settings: HookSett
       current.hooks[event] = [...foreign, { ...(matcher ? { matcher } : {}), hooks: [{ type: 'command', command: cmd, timeout: settings.timeout }] }]
     }
 
+    // Agent Messages' block: exactly one, running the current command, every other block in that event as it was.
+    if (settings.inbox && inboxCommand) {
+      const event = settings.inbox.event
+      if (current.hooks[event] !== undefined && !Array.isArray(current.hooks[event])) throw new HookPreparationHeld('a hook event is not a list')
+      const blocks = current.hooks[event] ?? []
+      const ours = blocks.filter(isMessagesBlock)
+      if (ours.length !== 1 || ours[0].matcher !== undefined || ours[0].hooks?.length !== 1 || ours[0].hooks[0]?.command !== inboxCommand
+        || ours[0].hooks[0]?.timeout !== settings.timeout) changed = true
+      current.hooks[event] = [...blocks.filter((b) => !isMessagesBlock(b)), { hooks: [{ type: 'command', command: inboxCommand, timeout: settings.timeout }] }]
+    }
+
     const next = changed ? JSON.stringify(current, null, 2) + '\n' : observed.content!
     const reviewed = settings.reviewed ? prepareReviewed(settings.reviewed, home, file, JSON.parse(next) as Settings) : null
     reviewed?.verify()
@@ -77,7 +94,7 @@ export async function installHookSettings(engine: HookEngine, settings: HookSett
     const approval = await reviewed?.commit(attempt)
     published.verify(); approval?.verify()
     return true
-  }, { ...options, identity: JSON.stringify([engine, settings, port, home, cmd]) }) } catch (err) {
+  }, { ...options, identity: JSON.stringify([engine, settings, port, home, cmd, inboxCommand]) }) } catch (err) {
     console.error(say(messages.failed), err)
     return false
   }

@@ -12,7 +12,7 @@ import { SHELL_REQUESTS } from '../shellProtocol.js'
 import { ENCRYPTED_RPC_RESULT_TYPES, isEncryptedDownType } from './core.js'
 import { SHARE_REQUEST_TYPES, SHARE_RESULT_TYPES } from '../../sharing/protocol.js'
 import { VIEWER_DOWN_TYPES } from '../viewerWire.js'
-import { TEAM_REQUEST_TYPES, TEAM_RESULT_TYPES } from '../../teams/wire.js'
+import { AGENT_MESSAGES_REQUEST_TYPES, AGENT_MESSAGES_RESULT_TYPES } from '../../messages/wire.js'
 import { ROUTE_COMMAND_TYPES, PAIR_REQUESTS, PLATE_REQUEST, PLATE_RESULT, rpcResultType } from '../relayFrames.js'
 
 // The ones the core reads too, to dispatch a request and name its reply, live with its other frame rules
@@ -62,7 +62,7 @@ export function admitRelayedPairFrame(frame: { type?: unknown; payload?: unknown
 }
 export const encryptDownFrame = (type: string): boolean =>
   isEncryptedDownType(type) || MACHINE_REQUESTS.has(type) || FLEET_REQUESTS.has(type) || SHARE_REQUEST_TYPES.has(type) || VIEWER_DOWN_TYPES.has(type)
-  || PAIR_REQUESTS.has(type) || type === PLATE_REQUEST || TEAM_REQUEST_TYPES.has(type)
+  || PAIR_REQUESTS.has(type) || type === PLATE_REQUEST || AGENT_MESSAGES_REQUEST_TYPES.has(type)
 /** Client→daemon requests that older daemons took in the clear and no longer do. A client seals them
  * only for a daemon whose e2e_welcome says `strictDown` — an older one would never open the envelope
  * and would read the request as empty. A daemon that says `strictDown` refuses them unsealed. */
@@ -98,5 +98,5 @@ const SEALED_REPLIES = new Set([
 ])
 export const encryptRpcResult = (type: string): boolean =>
   ENCRYPTED_RPC_RESULT_TYPES.has(type) || MACHINE_RESULTS.has(type) || FLEET_RESULTS.has(type) || SHARE_RESULT_TYPES.has(type)
-  || PAIR_RESULTS.has(type) || type === LOCAL_PAIR_RESULT || type === QUESTION_RESULT || type === PLATE_RESULT || TEAM_RESULT_TYPES.has(type)
+  || PAIR_RESULTS.has(type) || type === LOCAL_PAIR_RESULT || type === QUESTION_RESULT || type === PLATE_RESULT || AGENT_MESSAGES_RESULT_TYPES.has(type)
   || SEALED_REPLIES.has(type)

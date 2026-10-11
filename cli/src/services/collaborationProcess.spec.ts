@@ -12,13 +12,13 @@ const OWNER = { local: true, owner: true }
 const flush = async () => { for (let i = 0; i < 5; i++) await new Promise((settle) => setTimeout(settle, 0)) }
 const agent = (agentId: string) => ({ agentId, sessionId: `s-${agentId}`, engine: 'claude', cwd: '/w', displayName: agentId, terminalAvailable: true }) as unknown as RegisteredSession
 
-describe('Tab collaboration and teams in the teams\' own process', () => {
+describe('Agent Messages in the teams\' own process', () => {
   afterEach(() => vi.clearAllMocks())
 
   const setup = () => {
     let options: ServiceProcessOptions | null = null
     let api: CoreApi | null = null
-    let given: TeamsOptions | null = null
+    let given: TeamsOptions | undefined
     let clock = 10_000
     const timers: Array<{ run: () => void; ms: number; cleared: boolean }> = []
     const writable = new Set<string>()
@@ -35,11 +35,9 @@ describe('Tab collaboration and teams in the teams\' own process', () => {
         given = opts
         return {
           requests: {
-            team: async (payload) => ({ team: payload.action, agents: core.agents.live().map((a) => a.agentId), command: core.daemon.command }),
-            team_delivery: async (payload) => ({ delivery: payload.action }),
+            agent_messages: async (payload) => ({ action: payload.action, agents: core.agents.live().map((a) => a.agentId), command: core.daemon.command }),
           },
           canWrite: (id) => writable.has(id),
-          refreshChannels: () => calls.push('refresh'),
           start: () => calls.push('start'),
           stop: () => calls.push('stop'),
         } satisfies Teams
@@ -65,8 +63,7 @@ describe('Tab collaboration and teams in the teams\' own process', () => {
     options.onConnected!(link.connection)
     await flush()
     expect(calls).toEqual(['start'])
-    expect(await options.requests.team!({ action: 'list' }, OWNER)).toEqual({ team: 'list', agents: ['a1'], command: `'node' 'cli.js'` })
-    expect(await options.requests.team_delivery!({ action: 'status' }, OWNER)).toEqual({ delivery: 'status' })
+    expect(await options.requests.agent_messages!({ action: 'history' }, OWNER)).toEqual({ action: 'history', agents: ['a1'], command: `'node' 'cli.js'` })
     // Connected again (a new core, the same machine): asked how the daemon runs again, not started twice.
     const again = core({ shown: { agents: [agent('a1')] }, daemon: { command: `'node' 'cli.js'`, port: 18473, machineId: 'm' } })
     options.onConnected!(again.connection)
@@ -74,7 +71,7 @@ describe('Tab collaboration and teams in the teams\' own process', () => {
     expect(calls).toEqual(['start'])
     expect(link.asked.filter(([name]) => name === 'daemon')).toHaveLength(1)
     expect(again.asked.filter(([name]) => name === 'daemon')).toHaveLength(1)
-    // A core under another machine (signed in since): the teams under the old one go, new ones start.
+    // A core under another machine (signed in since): the service under the old one goes, a new one starts.
     options.onConnected!(core({ shown: { agents: [] }, daemon: { command: 'x', port: 1, machineId: 'account-machine' } }).connection)
     await flush()
     expect(calls).toEqual(['start', 'stop', 'start'])
@@ -86,7 +83,7 @@ describe('Tab collaboration and teams in the teams\' own process', () => {
     await flush()
     options.onConnected!(core({ daemon: new Error('gone') }).connection)
     await flush()
-    expect(await options.requests.team!({ action: 'list' }, OWNER)).toMatchObject({ command: 'x' })
+    expect(await options.requests.agent_messages!({ action: 'history' }, OWNER)).toMatchObject({ command: 'x' })
     expect(calls).toEqual(['start'])
   })
 
@@ -95,23 +92,18 @@ describe('Tab collaboration and teams in the teams\' own process', () => {
     options.onConnected!(core({ daemon: { error: 'NOT_AN_EXPERIMENT' } }).connection)
     await flush()
     expect(calls).toEqual([])
-    expect(await options.requests.team!({ action: 'list' }, OWNER)).toMatchObject({ team: 'list' })
+    expect(await options.requests.agent_messages!({ action: 'history' }, OWNER)).toMatchObject({ action: 'history' })
     expect(calls).toEqual([])
   })
 
-  it('reads the scopes as the core says them, and their reply moving back through the core', async () => {
-    const { options, given } = setup()
-    const link = core({ team_scope: { teamId: 'a'.repeat(32) } })
+  it('gives the service its data folder, and hears from it when what may be written changed', async () => {
+    const { options, given, writable } = setup()
+    const link = core()
     options.onConnected!(link.connection)
-    expect(await given().scopes.current('a1')).toBe('a'.repeat(32))
-    link.query.mockResolvedValueOnce({ teamId: null })
-    expect(await given().scopes.current('a1')).toBeNull()
-    link.query.mockRejectedValueOnce(new Error('gone'))
-    expect(await given().scopes.current('a1')).toBeNull()
-    await given().scopes.replied('a1', 'a'.repeat(32), 'b'.repeat(32))
-    link.query.mockRejectedValueOnce(new Error('gone'))
-    expect(await given().scopes.replied('a1', 't', 'q')).toEqual({})
-    expect(link.asked).toContainEqual(['team_replied', { agentId: 'a1', teamId: 'a'.repeat(32), questionId: 'b'.repeat(32) }])
+    expect(given().dataDir).toBe('/data')
+    writable.add('team:d9')
+    given().changed!()
+    expect(link.asked.at(-1)?.[0]).toBe('writable')
   })
 
   it('tells the core a delivery may be written before handing it over, and keeps telling while any may', async () => {
@@ -152,16 +144,10 @@ describe('Tab collaboration and teams in the teams\' own process', () => {
     expect(link.asked.filter(([name]) => name === 'writable').at(-1)![1]).toEqual({ deliveries: { 'team:d5': expect.any(Number) } })
   })
 
-  it('asks the core to take a delivery back before its mailbox reads the answer in line, and forgets it after', async () => {
-    const { options, api, given } = setup()
-    const link = core({ cancel_delivery: { cancelled: true } })
-    options.onConnected!(link.connection)
+  it('takes nothing back in line: a delivery its mailbox no longer wants is one it says may not be written', async () => {
+    const { options, api } = setup()
+    options.onConnected!(core().connection)
     expect(api().turns.cancelDelivery('team:d1')).toBe(false)
-    const release = await given().takingBack!('team:d1')
-    expect(api().turns.cancelDelivery('team:d1')).toBe(true)
-    release()
-    expect(api().turns.cancelDelivery('team:d1')).toBe(false)
-    given().changed!()
   })
 
   it('hears the account\'s notices once it runs, and its deliveries\' progress; anything else is not its', async () => {
@@ -209,7 +195,7 @@ describe('Tab collaboration and teams in the teams\' own process', () => {
     const { options, api, service, stop, calls, writable, timers } = setup()
     api().turns.deliver('a1', 'q', 'team:d1')
     await flush()
-    expect(await options.requests.team!({ action: 'list' }, OWNER)).toMatchObject({ agents: [], command: 'harness' })
+    expect(await options.requests.agent_messages!({ action: 'history' }, OWNER)).toMatchObject({ agents: [], command: 'harness' })
     options.onConnected!(core().connection)
     writable.add('team:d2')
     api().turns.deliver('a1', 'q', 'team:d2')
@@ -233,7 +219,7 @@ describe('Tab collaboration and teams in the teams\' own process', () => {
         dataDir: '/data', socketPath: '/s', machineId: 'm', token: 't',
         start: (given) => {
           api = given
-          return { requests: { team: async () => ({}), team_delivery: async () => ({}) }, canWrite: (id) => writable.has(id), refreshChannels: () => {}, start: () => {}, stop: () => {} }
+          return { requests: { agent_messages: async () => ({}) }, canWrite: (id) => writable.has(id), start: () => {}, stop: () => {} }
         },
       })
       const options = vi.mocked(runServiceProcess).mock.calls.at(-1)![0]
@@ -251,6 +237,6 @@ describe('Tab collaboration and teams in the teams\' own process', () => {
   it('starts the real service when given none', async () => {
     const { runServiceProcess } = await import('./process.js')
     runCollaborationService({ dataDir: '/data-that-is-not-there', socketPath: '/s', machineId: 'm', token: 't' }).stop()
-    expect(vi.mocked(runServiceProcess).mock.calls.at(-1)![0].requests.team_delivery).toBeTypeOf('function')
+    expect(vi.mocked(runServiceProcess).mock.calls.at(-1)![0].requests.agent_messages).toBeTypeOf('function')
   })
 })
