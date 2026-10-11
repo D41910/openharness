@@ -94,19 +94,3 @@ it('keeps the production resolver asynchronous when only the interactive shell c
   try { expect(await opencodeMajorVersion()).toBe(2) }
   finally { clearTimeout(timer) }
 }, 8_000)
-
-it('retries an unavailable version on the same unchanged executable', async () => {
-  const memo = new Map<string, number | null>()
-  let output = 'temporarily unavailable'
-  const probe = { identity: () => 'same-installed-file', read: () => output }
-  expect(await majorVersion(rule, probe, memo)).toBeNull()
-  expect(memo.has('same-installed-file')).toBe(false)
-  output = '2.0.18'
-  expect(await majorVersion(rule, probe, memo)).toBe(2)
-  expect(memo.get('same-installed-file')).toBe(2)
-})
-
-it('does not treat a legacy null memo entry as confirmed executable evidence', async () => {
-  const memo = new Map<string, number | null>([['same-installed-file', null]])
-  expect(await majorVersion(rule, { identity: () => 'same-installed-file', read: () => '1.18.31' }, memo)).toBe(1)
-})

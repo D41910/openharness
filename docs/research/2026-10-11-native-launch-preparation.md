@@ -13,7 +13,7 @@ The tests pin platform, replace host executable paths, and run under
 
 ## Implemented mechanics
 
-- Unknown executable versions remain retryable. An executable observation owns
+- Executable observations retain their identity. An executable observation owns
   one resolved command and the file version that answered its version probe.
 - Hook preparation inspects every destination before publication, preserves
   foreign commands and settings, rejects malformed or ambiguous configuration,
@@ -163,3 +163,29 @@ Pi installation and the former unknown-OpenCode-version expectation. The
 all three review fixes: typecheck, 203 focused cases and 316 affected cases pass
 (five environment-gated cases remain skipped). Full core coverage, private e2e,
 assertion-failing mutations and exact-head approval are still required.
+
+Final review of `1f71fd298` identified a prerequisite: refusing an unknown
+OpenCode version also prevents a clean machine from reaching its existing pane
+installer. This mechanics slice therefore preserves main's legacy TUI preparation
+for that case. Unknown-version launch holds belong with installer-only continuation
+in the whole-launch change. A create regression now covers the absent-version
+route; no claim is made that this PR completes native launch safety.
+
+The first mutation run caught nine faults but four test oracles were inadequate
+(two type errors, an early-join timeout and a reservation fixture that reached the
+wrong filesystem read). Their assertions/fixture now target the intended behavior.
+The unknown-version mutant is deferred with its prerequisite, leaving twelve.
+The 01:04 UTC full gate passed typecheck, architecture, harnessd and all 441 hook
+goldens; core reported three handoff-publication timeouts under concurrent disk
+work. Its remaining tests were interrupted for the required review correction.
+The private e2e run passed three eager-hook cases and failed the Codex case because
+the local bundle omitted the required macOS process-control helper. The corrected
+run must embed the matching locally built helper; it is not a production change.
+
+Linux CI on `1f71fd298` found that removing the legacy null-version cache changes
+the old unknown-version command trace. That policy change is deferred with the
+whole-launch snapshot, keeping the launch golden unchanged in this mechanics PR.
+CI also exposed a transient native directory-enumeration hold when another test
+changed an ancestor under `/tmp`. The Stop/archive regression now checks that this
+specific hold preserves the row and retries it at most twice; all other errors
+still fail immediately. This changes no production identity rule.

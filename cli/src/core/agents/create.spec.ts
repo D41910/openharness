@@ -151,6 +151,14 @@ describe('creating an agent', () => {
     expect(createAndRegisterPane).toHaveBeenCalledTimes(1)
   })
 
+  it('reaches the existing first-install pane route when OpenCode is absent', async () => {
+    vi.mocked(opencodeMajorVersion).mockResolvedValueOnce(null)
+    const { create } = setup({ installOpencodePlugin })
+    expect(await create(request({ engine: 'opencode' }))).toMatchObject({ ok: true })
+    expect(buildEngineLaunchArgv).toHaveBeenCalledWith('opencode', expect.objectContaining({ installIfMissing: { install: 'recipe' } }))
+    expect(createAndRegisterPane).toHaveBeenCalledTimes(1)
+  })
+
   it('hands external resume to its durable controller before folder, instructions or engine preparation', async () => {
     const externalResume = vi.fn<CreateAgentDeps['externalResume']>(async () => ({ ok: true, session: pending }))
     const test = setup({ externalResume })

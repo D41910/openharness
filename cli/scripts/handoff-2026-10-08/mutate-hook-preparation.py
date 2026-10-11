@@ -15,7 +15,6 @@ preparation = 'src/engines/nativeHookPreparation.spec.ts'
 mutations = [
     ('wrong plugin port', hooks, 'port: String(port)', "port: '19475'", golden, ''),
     ('core installer disconnected', 'src/core/engines/hooks.ts', 'return await (snapshot ? nativeHooks.installOpencodePlugin(port, snapshot) : nativeHooks.installOpencodePlugin(port)) !== false', 'return true', golden, ''),
-    ('unknown version guessed', hooks, 'if (major === null) return false', 'if (major === null) return true', preparation, 'version evidence is unavailable'),
     ('upgrade removal disconnected', hooks, 'const removedOrInstalled = await legacy.commit(attempt)', 'const removedOrInstalled = { verify: () => {} }', golden, ''),
     ('disk confirmation bypassed', files, 'fsync(fd, settled)', 'queueMicrotask(() => settled(null))', attempts, 'event loop available'),
     ('joining deadline ignored', files, "if (performance.now() >= deadline) throw new HookPreparationHeld('the joining preparation exceeded its deadline')", 'void deadline', attempts, 'timer phase'),
@@ -25,7 +24,7 @@ mutations = [
     ('reservation extends original deadline', hooks, '&& opencodeInstallation.major === major && performance.now() < deadline', '&& opencodeInstallation.major === major', preparation, 'stalling reservation reads'),
     ('late proof ignores deadline', hooks, '  if (performance.now() >= deadline) return false', '  void deadline', preparation, 'after final proof reads'),
     ('peer bytes adopted as proof', files, '    // that arrived between the last verification and its filesystem reads.\n    verify()', '    // that arrived between the last verification and its filesystem reads.\n    check()', 'src/engines/kit/nativeHookFiles.spec.ts', 'peer edit during final proof capture'),
-    ('foreign command ownership broadened', 'src/engines/kit/notifyHooks.ts', 'if (/[;&|<>$`(){}*?\[\]~#]/.test(char))', 'if (/[;&|<>$`(){}]/.test(char))', preparation, 'foreign shell command'),
+    ('foreign command ownership broadened', 'src/engines/kit/notifyHooks.ts', r'if (/[;&|<>$`(){}*?\[\]~#]/.test(char))', 'if (/[;&|<>$`(){}]/.test(char))', preparation, 'foreign shell command'),
 ]
 environment = dict(os.environ, TZ='UTC', TMPDIR='/tmp', HARNESS_CONNECTIONS_PORT='0')
 for key in ('TMUX', 'TMUX_PANE', 'RECORD_NATIVE_VERSION_GOLDEN', 'RECORD_OTHER_ENGINES_GOLDEN'):

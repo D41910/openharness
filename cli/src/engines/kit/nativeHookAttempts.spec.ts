@@ -31,6 +31,7 @@ it('keeps the event loop available and retains the descriptor and reservation af
   const pending = runHookPreparation([file], attempt => inspectHookFile(file).replace('after', attempt), { timeoutMs: 20 }).catch(error => error)
   await drain()
   const fd = [...disk.pending.keys()][0]
+  expect(fd).toBeTypeOf('number')
   expect(fstatSync(fd).isFile()).toBe(true)
   let stopped = false
   setTimeout(() => { stopped = true }, 1)
@@ -117,7 +118,10 @@ it('checks each joining owner and deadline without cancelling the original insta
   }, { identity: 'same' })
   await drain()
   const work = vi.fn(async () => true)
-  await expect(runHookPreparation([file], work, { identity: 'same', current: () => false })).rejects.toThrow(/joining owner/)
+  let refused: unknown
+  void runHookPreparation([file], work, { identity: 'same', current: () => false }).catch(error => { refused = error })
+  await drain()
+  expect(refused).toEqual(expect.objectContaining({ message: expect.stringMatching(/joining owner/) }))
   const short = runHookPreparation([file], work, { identity: 'same', timeoutMs: 5 }).catch(error => error)
   let current = true
   const cancelled = runHookPreparation([file], work, { identity: 'same', current: () => current }).catch(error => error)
@@ -168,7 +172,7 @@ it('checks the joining deadline even when the timer phase has not run', async ()
   const now = vi.spyOn(performance, 'now').mockReturnValue(10)
   finish(true)
   expect(await original).toBe(true)
-  expect((await joined).message).toMatch(/deadline/)
+  expect(await joined).toEqual(expect.objectContaining({ message: expect.stringMatching(/deadline/) }))
   now.mockRestore()
 })
 

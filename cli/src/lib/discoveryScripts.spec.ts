@@ -186,14 +186,14 @@ describe('generated discovery scripts', () => {
     expect(readFileSync(settings, 'utf8')).toBe(settingsText)
   })
 
-  it('holds both plugin surfaces until the installed OpenCode generation is confirmed', async () => {
+  it('preserves first-install TUI preparation before OpenCode is installed', async () => {
     const config = scratch()
     const pluginDir = join(config, 'plugin')
     version.major = null
     vi.stubEnv('OPENCODE_PLUGIN_DIR', pluginDir)
     const { installOpencodePlugin } = await import('./hooks.js')
-    expect(await installOpencodePlugin(4242)).toBe(false)
+    expect(await installOpencodePlugin(4242)).toBe(true)
     expect(existsSync(join(pluginDir, 'launcher-register.js'))).toBe(false)
-    expect(existsSync(join(config, 'plugins', 'launcher-register', 'tui.js'))).toBe(false)
+    expect(existsSync(join(config, 'plugins', 'launcher-register', 'tui.js'))).toBe(true)
   })
 })

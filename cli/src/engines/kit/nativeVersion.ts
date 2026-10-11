@@ -57,13 +57,12 @@ export function nativeVersionProbe(rule: VersionRule, binary: () => string): Nat
   }
 }
 
-/** Only confirmed observations survive an attempt. A timeout says nothing about
- * the installed version and must not poison later launches of the same file. */
+/** Compatibility behavior: one answer per installed file; absent files have no cache key.
+ * Whole-launch preparation replaces this legacy cache policy with its snapshot. */
 const publishing = new WeakMap<Map<string, number | null>, Map<string, object>>()
 export async function majorVersion(rule: VersionRule, probe: VersionProbe, memo: Map<string, number | null>): Promise<number | null> {
   const identity = probe.identity()
-  const known = identity !== null ? memo.get(identity) : null
-  if (typeof known === 'number') return known
+  if (identity !== null && memo.has(identity)) return memo.get(identity) ?? null
   const attempts = publishing.get(memo) ?? new Map<string, object>()
   publishing.set(memo, attempts)
   const ticket = {}
@@ -78,7 +77,7 @@ export async function majorVersion(rule: VersionRule, probe: VersionProbe, memo:
     // file. The synchronous implementation could never overlap in this way.
     if (attempts.get(identity) !== ticket) return current ? major : null
     attempts.delete(identity)
-    if (current && major !== null) memo.set(identity, major)
+    if (current) memo.set(identity, major)
   }
   if (!current) return null
   return major

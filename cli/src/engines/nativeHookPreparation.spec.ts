@@ -24,7 +24,7 @@ afterEach(() => {
 })
 async function fixture() {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'native-hook-preparation-'))); roots.push(root)
-  for (const name of ['HOME', 'ADAPTER_DATA_DIR', 'OPENCODE_CONFIG_DIR', 'OPENCODE_DATA_DIR', 'CODEX_HOME', 'HERMES_HOME', 'CURSOR_CONFIG_DIR']) {
+  for (const name of ['HOME', 'ADAPTER_DATA_DIR', 'OPENCODE_CONFIG_DIR', 'OPENCODE_PLUGIN_DIR', 'OPENCODE_DATA_DIR', 'CODEX_HOME', 'HERMES_HOME', 'CURSOR_CONFIG_DIR']) {
     const path = join(root, name); mkdirSync(path); vi.stubEnv(name, path)
   }
   vi.spyOn(console, 'log').mockImplementation(() => {})
@@ -35,17 +35,15 @@ async function fixture() {
   return { root, install: installOpencodePlugin, legacy: OPENCODE_LEGACY_PLUGIN.file, tui: OPENCODE_TUI_PLUGIN.file }
 }
 
-it('keeps working hooks unchanged while version evidence is unavailable and recovers without a core restart', async () => {
+it('preserves the legacy first-install TUI preparation while the version is absent', async () => {
   const { install, legacy, tui } = await fixture()
-  expect(await install(4242)).toBe(true)
-  const old = [readFileSync(legacy, 'utf8'), readFileSync(tui, 'utf8')]
   probe.major = null
-  expect(await install(4343)).toBe(false)
-  expect([readFileSync(legacy, 'utf8'), readFileSync(tui, 'utf8')]).toEqual(old)
-  probe.major = 2
-  expect(await install(4343)).toBe(true)
+  expect(await install(4242)).toBe(true)
   expect(() => readFileSync(legacy)).toThrow()
-  expect(readFileSync(tui, 'utf8')).toContain('4343')
+  expect(readFileSync(tui, 'utf8')).toContain('4242')
+  probe.major = 1
+  expect(await install(4343)).toBe(true)
+  expect(readFileSync(legacy, 'utf8')).toContain('4343')
 })
 
 it('holds an upgrade if removal fails and only acknowledges it after recovery', async () => {
@@ -325,7 +323,9 @@ it('cannot extend the OpenCode deadline by stalling reservation reads', async ()
   const { install, legacy, tui } = await fixture()
   let time = 0
   vi.spyOn(performance, 'now').mockImplementation(() => time)
-  probe.onStat = path => { if (path === legacy) time = 20 }
+  const fs = await import('node:fs')
+  vi.spyOn(fs, 'fsync').mockImplementation((_fd, done) => { queueMicrotask(() => done(null)) })
+  probe.onStat = path => { if (path === dirname(legacy)) time = 20 }
   expect(await install(4242, undefined, { timeoutMs: 10 })).toBe(false)
   expect(() => readFileSync(legacy)).toThrow()
   expect(() => readFileSync(tui)).toThrow()

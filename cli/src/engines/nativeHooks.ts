@@ -50,7 +50,10 @@ export async function installOpencodePlugin(port: number, snapshot?: OpencodeLau
     // A newer request may have installed an upgraded/downgraded engine's hooks
     // while this probe waited. Only the latest request can change those files.
     if (installation !== opencodeInstallation || snapshot?.current() === false) return false
-    if (major === null) return false
+    // Keep the existing first-install route until installer-only continuation
+    // can return through launch preparation. A missing executable also gives
+    // null here; refusing it would prevent create from reaching its installer.
+    // Whole-launch preparation must confirm a version before native dispatch.
     try { return await runHookPreparation([OPENCODE_LEGACY_PLUGIN.file, OPENCODE_TUI_PLUGIN.file], async attempt => {
       // Inspect both destinations before publishing. A foreign legacy plugin
       // cannot authorize even the first half of an upgrade's writes.
